@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "207114874765",
+    "project_id": "ripplechat-126de",
+    "storage_bucket": "ripplechat-126de.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:207114874765:android:6d54512d86c6b3f08f57c4",
+        "android_client_info": {
+          "package_name": "com.example.ripplechat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCVpeIub4gV0tCMMq2JxKpwEuYFYMnl2ok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

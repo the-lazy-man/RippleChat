@@ -1,0 +1,463 @@
+# High-Level Architecture (What & Why)
+
+* **UI / Presentation (Jetpack Compose + MVVM):**
+
+  * **Screens**: Splash, Login, Signup, Dashboard, Chat, Profile.
+  * **Each screen** has a **ViewModel** exposing `StateFlow` → Compose collects via `collectAsState()`.
+  * **Navigation**: `NavHost` with routes. For chat, we pass `chatId`, `peerUid`, `peerName`.
+
+* **Data layer (simple & pragmatic):**
+
+  * **Firestore** for realtime user & message data.
+  * **Room** as a local cache (fast initial load, offline, smooth scrolling).
+  * **Firebase Auth** for identity.
+  * Minimal **Repository** only where it adds value (chat). For Auth we directly use Firebase in `AuthViewModel` to avoid boilerplate—this matches your “resume project, minimal files” requirement.
+
+* **Realtime strategy (Chat):**
+
+  * **Local-first UI**: observe Room messages → instant list.
+  * **Remote listener**: Firestore snapshot listener → map → **insert into Room** → UI updates automatically.
+  * **Send message**: write to Firestore; **optimistically** insert into Room for snappy UX.
+  * **Typing indicator**: booleans `typing_<uid>` on `/chats/{chatId}` doc; debounced updates while typing.
+
+* **Deterministic chatId**:
+
+  * `chatId = min(uidA, uidB) + "-" + max(uidA, uidB)` ensures both sides write to **one** thread.
+
+---
+
+# Firestore & Room Schema (Interview-friendly)
+
+## Firestore
+
+```
+users/{uid} {
+  name: String,
+  email: String,
+  photoUrl: String? // for profile
+}
+
+chats/{chatId} {
+  lastMessage: String?,
+  lastTimestamp: Timestamp?,
+  typing_<uidA>: Boolean,
+  typing_<uidB>: Boolean,
+}
+
+chats/{chatId}/messages/{messageId} {
+  text: String,
+  senderId: String,
+  timestamp: Timestamp // serverTimestamp()
+}
+```
+
+## Room
+
+* **Entity**: `MessageEntity(id, chatId, messageId, senderId, text, timestampMillis)`
+* **DAO**:
+
+  * `getMessagesFlow(chatId): Flow<List<MessageEntity>>`
+  * `insertAll(list)` / `insertMessage(entity)`
+  * `clearChat(chatId)`
+
+**Why both Firestore & Room?**
+
+* Firestore gives realtime + multi-device sync.
+* Room gives **instant cold loads**, **smooth scrolling**, and **offline** beyond Firestore’s built-in cache, while letting **Compose observe a single local source of truth**.
+
+---
+
+# Dependency Injection (Hilt) — Why & How
+
+We keep DI minimal—only what helps wiring without boilerplate:
+
+* **Singletons**:
+
+  * `FirebaseAuth.getInstance()`
+  * `FirebaseFirestore.getInstance()`
+  * `Room.databaseBuilder(..., "ripple_chat_db")`
+  * `FirebaseSource` (thin wrapper) and `ChatRepository`
+
+* **Why DI here?**
+
+  * Makes `ChatViewModel` constructor-injectable (clean testing, easy swapping).
+  * Keeps screen code lean; avoids singletons scattered throughout the app.
+
+**Key Hilt module methods & why:**
+
+```kotlin
+@Provides @Singleton fun provideFirebaseAuth(): FirebaseAuth
+```
+
+* One `FirebaseAuth` instance app-wide; no redundant creations, consistent user session.
+
+```kotlin
+@Provides @Singleton fun provideFirestore(): FirebaseFirestore
+```
+
+* Ensures one Firestore instance; can later add settings (e.g., persistence, cache size).
+
+```kotlin
+@Provides @Singleton fun provideDatabase(ctx): AppDatabase
+@Provides fun provideMessageDao(db): MessageDao
+```
+
+* Room DB is expensive to create; we reuse it as a singleton. DAO is a lightweight handle.
+
+```kotlin
+@Provides @Singleton fun provideFirebaseSource(auth, firestore): FirebaseSource
+```
+
+* Centralizes Firebase calls; lets us unit test `ChatRepository` with a fake source.
+
+```kotlin
+@Provides fun provideChatRepository(source, dao): ChatRepository
+```
+
+* The only repository we maintain (chat) because it orchestrates **two sources** (Firestore + Room). This is where DI shines.
+
+> **Interview tip:** Call out that you **didn’t** create repositories for everything by default. For **Auth**, the ViewModel talks to Firebase directly to keep the project concise. For **Chat**, a repo is valuable because it composes multiple data sources and enforces a local-first strategy.
+
+---
+
+# Data Classes & Utilities (Why designed this way)
+
+### `ChatMessage`
+
+* UI-friendly domain model with **stable fields** (`messageId`, `chatId`, `senderId`, `text`, `timestampMillis`).
+* Decouples UI from Firestore document shapes.
+
+### `MessageEntity`
+
+* Flattened Room model for fast queries & ordering.
+* Stores `timestamp` as **epoch millis** for simple sorting and display.
+
+### Mapping
+
+* Repository maps Firestore → `ChatMessage` → `MessageEntity` and back.
+* Keeps ViewModel blind to persistence details.
+
+---
+
+# FirebaseSource (thin wrapper)
+
+**Role:** Centralize Firestore/Auth calls that are reused and/or cumbersome to mock.
+
+Core functions & rationale:
+
+* `currentUserUid()`: convenience; avoids sprinkling `FirebaseAuth.getInstance()` everywhere.
+* `createUserInFirestore(uid, name, email)`: after signup, ensure `/users/{uid}` exists.
+* `getOtherUsers()`: reads `/users` once for Dashboard; real app might paginate or cache.
+* `listenMessages(chatId, onEvent)`: returns `ListenerRegistration`. The **repository** decides what to do with the data (convert + write to Room).
+* `sendMessage(chatId, payload)`: single point to also **update** `/chats/{chatId}` with `lastMessage`/`lastTimestamp` (so Dashboard preview is simple and cheap).
+* `setTyping(chatId, uid, isTyping)`: toggles typing flag on chat doc.
+* `listenChatDoc(chatId, onDoc)`: separate doc listener purely for typing and metadata.
+
+> **Why not put Firestore code directly in ViewModels?**
+> For **Chat**, the ViewModel would end up mixing networking + local DB concerns. The repository keeps it clean and testable.
+
+---
+
+# ChatRepository (where the orchestration lives)
+
+Core responsibilities:
+
+1. **Expose local flow** for Compose:
+
+   ```kotlin
+   fun getLocalMessagesFlow(chatId): Flow<List<ChatMessage>>
+   ```
+
+   * DAO emits Room rows; repository maps to `ChatMessage` for UI.
+   * **Why Flow?** Compose can automatically update on DB changes.
+
+2. **Sync remote → local**:
+
+   ```kotlin
+   fun listenMessagesRealtime(chatId, onEvent: (List<ChatMessage>) -> Unit)
+   ```
+
+   * Starts Firestore listener via `FirebaseSource`.
+   * Maps snapshot docs → `ChatMessage` (handles server `Timestamp` → millis).
+   * Reports back to ViewModel, which uses `insertLocal(list)` to persist.
+
+3. **Send message (remote)**:
+
+   ```kotlin
+   suspend fun sendMessage(chatId, text, senderId)
+   ```
+
+   * Writes a canonical doc (with `serverTimestamp()`).
+   * **No direct Room write here**; we rely on the listener to re-emit.
+     (We still **optimistically** insert in the ViewModel for instant UX.)
+
+4. **Typing**:
+
+   ```kotlin
+   fun setTyping(chatId, uid, isTyping)
+   fun listenChatDoc(chatId, onDoc)
+   ```
+
+   * Separate doc listener to avoid mixing with message stream; fewer re-renders.
+
+5. **Insert helpers**:
+
+   ```kotlin
+   suspend fun insertLocal(list) / insertLocalSingle(msg)
+   ```
+
+   * Offloads IO to `Dispatchers.IO`; keeps ViewModel lightweight.
+
+> **Interview angle:** Emphasize the **local-first** approach, optimistic updates, and why the repository is the correct place to **merge** Firestore’s realtime feed with Room as the single source of truth for UI.
+
+---
+
+# ViewModels (screen by screen, with method deep-dives)
+
+## 1) SplashViewModel
+
+**Goal:** Decide initial route.
+
+* `isUserLoggedIn() = FirebaseAuth.getInstance().currentUser != null`
+
+  * No coroutines needed.
+  * UI shows a quick animation then routes either to Login or Dashboard.
+
+**Why so small?** No state to manage; keeps it simple.
+
+---
+
+## 2) AuthViewModel (Login/Signup)
+
+**Why no repository here?** Only Auth + a single Firestore write (`/users/{uid}` on signup). Adding a repository would be ceremony without value.
+
+### Methods
+
+* `login(email, password)`
+
+  * Sets `_authState = Loading`.
+  * Calls `signInWithEmailAndPassword`.
+  * On success → `_authState = Success`, UI navigates.
+  * On failure → `_authState = Error(msg)`, UI shows Toast.
+
+* `signup(name, email, password)`
+
+  * Sets `_signupState = Loading`.
+  * Creates user; writes `/users/{uid}` with name/email.
+  * On success → `_signupState = Success`.
+  * On failure → Error.
+
+* `clearState()` / `clearSignupState()`
+
+  * Resets state so Compose doesn’t re-trigger side effects.
+
+**Why `StateFlow`?** ViewModel emits a single, replayable state; Compose lifecycle-aware collecting is straightforward (`collectAsState()`).
+
+**Interview notes:**
+
+* Validate inputs (non-blank).
+* Add throttling/debounce or disable buttons while `Loading` to prevent double taps.
+
+---
+
+## 3) DashboardViewModel
+
+**Goal:** Show list of other users to start chats.
+
+* `fetchUsers()`
+
+  * Reads `/users` (one shot).
+  * Filters out current uid.
+  * Maps to `User(name, email, uid)`.
+  * Emits `_users`.
+
+**Why no listeners here?** For a simple resume project, a one-time fetch is enough. You can upgrade to `addSnapshotListener` later for live user list changes.
+
+**Navigation logic in UI:**
+
+* On click user → produce stable `chatId` with lexicographic ordering.
+* Navigate to `chat/$chatId/$peerUid/$peerName`.
+
+**Interview notes:**
+
+* We keep Dashboard minimal; if needed, you can add a `/chats` query scoped to the current user for true “recent chat list” with last message preview (we already maintain `chats/{chatId}.lastMessage` for this).
+
+---
+
+## 4) ChatViewModel (the core piece)
+
+**State exposed to UI:**
+
+* `messages: StateFlow<List<ChatMessage>>`
+* `otherTyping: StateFlow<Boolean>`
+* `currentUserId: String?`
+
+**Lifecycle-aware setup:**
+
+* `init(chatId, peerUid)`
+
+  1. **Collect Room**:
+
+     ```kotlin
+     repo.getLocalMessagesFlow(chatId).collect { _messages.value = it }
+     ```
+
+     → Always fast and immediate.
+  2. **Listen Firestore**:
+
+     ```kotlin
+     messagesListener = repo.listenMessagesRealtime(chatId) { remote ->
+         repo.insertLocal(remote) // writes to Room → UI updates
+     }
+     ```
+  3. **Typing doc**:
+
+     ```kotlin
+     chatDocListener = repo.listenChatDoc(chatId) { doc ->
+         _otherTyping.value = (doc["typing_${peerUid}"] as? Boolean) ?: false
+     }
+     ```
+
+* **sendMessage(text)**
+
+  * Guard if empty.
+  * Call `repo.sendMessage()`.
+  * **Optimistic local insert** (UUID + `System.currentTimeMillis()`):
+
+    ```kotlin
+    repo.insertLocalSingle(localMsg)
+    ```
+  * The Firestore listener will later bring the canonical copy (id + server timestamp).
+
+* **updateTyping(isTyping)**
+
+  * Writes flag `typing_<myUid>` in chat doc.
+
+* **scheduleStopTyping()**
+
+  * Cancels previous job; after `delay(1200)`, sets typing false.
+  * This is a **debounce** so we don’t spam Firestore on every keystroke.
+
+* **removeListeners() / onCleared()**
+
+  * Calls `ListenerRegistration.remove()` to avoid leaks & duplicate listeners on recomposition.
+
+**Why ViewModel owns the listeners and not the Composable?**
+
+* ViewModel outlives configuration changes; the listener should survive screen rotation and be torn down only when the screen is actually leaving the back stack.
+
+**Ordering & consistency details:**
+
+* Firestore query orders by `timestamp`. Because we write with `serverTimestamp()`, some documents may initially read `null`. We handle this by:
+
+  * Always reading via snapshot listener which stabilizes timestamps once set by server.
+  * Storing epoch millis for Room sorting.
+
+**Interview notes (edge cases):**
+
+* Duplicate local vs remote messages? We use **messageId from Firestore** as `primary key` in Room (we set `messageId` field on entity). If optimistic insert used a temporary UUID, you can upsert again when Firestore brings the authoritative ID (in our simple version, we rely on REPLACE by `messageId`; or accept temporary duplicates for a brief moment in a resume project).
+* Backpressure: LazyColumn + Room Flow is efficient; Firestore listener diff is handled by SDK.
+
+---
+
+## 5) ProfileViewModel
+
+**State:**
+
+* `user: StateFlow<ProfileUser>`
+* `updateState: ProfileState` (you can convert to `StateFlow` later)
+
+**Init:**
+
+* `addSnapshotListener("/users/{uid}")` → live updates for name/photo.
+
+**updateName(newName)**
+
+* `db.collection("users").document(uid).update("name", newName)`
+* Sets `updateState` to Success/Error.
+
+**uploadPicture(uri)**
+
+* Upload to Storage at `profilePics/{uid}.jpg`.
+* Get download URL.
+* Update `/users/{uid}.photoUrl`.
+
+**Why put Storage + Firestore write in the VM?**
+
+* It’s a one-off flow; introducing a repository wouldn’t add much reuse or composition. Keep it simple.
+
+---
+
+# UI Patterns & Compose Choices (Why we wrote it this way)
+
+* **StateFlow → collectAsState()**: lifecycle aware; cancels & resumes with composition.
+* **LaunchedEffect(key)**: used to start side-effects exactly once per key (e.g., `chatId`).
+* **DisposableEffect**: used to remove Firestore listeners when the Composable leaves the composition (i.e., the screen is popped).
+* **Optimistic UI**: Send message inserts locally immediately → super responsive.
+* **Dark/Light theme**: Material 3 color scheme; Surface/tonalElevation for subtle bubbles.
+* **Adaptive**: LazyColumn scales nicely; padding/margins use `dp` and `weight`.
+
+---
+
+# Firestore Rules (baseline you can mention)
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null; // tighten for prod
+      match /messages/{messageId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+  }
+}
+```
+
+> **Interview tip:** In production, constrain chat access so only the two participants can read/write a given `chatId`.
+
+---
+
+# Common Interview Q\&A (how to answer crisply)
+
+* **Q: Why both Room and Firestore?**
+  A: Firestore gives realtime sync; Room gives fast cold start and smooth scrolling via a local source of truth. UI only observes Room; Firestore feeds Room.
+
+* **Q: How do you prevent multiple chat threads per pair?**
+  A: Deterministic `chatId` (lexicographic `uidA-uidB`) so both sides write/read the same path.
+
+* **Q: How is typing implemented?**
+  A: Boolean flags `typing_<uid>` on the chat document; each client writes its own flag (debounced). The other client listens to the chat doc to display “typing…”
+
+* **Q: What happens offline?**
+  A: Room keeps cached messages; when connectivity returns, Firestore listener replays changes and we upsert into Room.
+
+* **Q: Why is there a repository only for chat?**
+  A: Because chat **merges** Firestore + Room and manages realtime listeners — clear value. Auth/Profile are simple one-shot flows → direct in VM to keep the project concise (fits the resume goal).
+
+* **Q: How do you avoid leaks with listeners?**
+  A: `ListenerRegistration.remove()` in `DisposableEffect` and `onCleared()`; ViewModel owns listeners.
+
+* **Q: How do you ensure message order?**
+  A: Firestore query `orderBy("timestamp")`, map to epoch millis, and Room query orders by `timestamp ASC`. Server timestamps stabilize ordering.
+
+---
+
+# Small Implementation Notes (that show depth)
+
+* **Compose performance**: use `items(messages, key = { it.messageId })` to help LazyColumn recycling (you can add this small enhancement).
+* **Consistency**: set explicit time based on serverTimestamp; if you need **strict** dedup between optimistic local insert and remote emission, upsert by `messageId` (store temporary local IDs with a `pending` flag and reconcile when Firestore ID arrives).
+* **Nav safety**: sanitize `peerName` in the route or pass via `navArguments`/`SavedStateHandle`.
+* **Hilt ViewModels**: In a production codebase, annotate VMs that need DI with `@HiltViewModel` and retrieve with `hiltViewModel()`. (We kept code minimal; easy to upgrade.)
+
+---
+
+If you want, I can now:
+
+* Mark **which methods** you should walk through live in the interview (and in what order).
+* Show **tiny code upgrades** (keys in LazyColumn, `@HiltViewModel` annotations, `StateFlow` for `ProfileViewModel.updateState`) so you can talk about “future improvements”.
