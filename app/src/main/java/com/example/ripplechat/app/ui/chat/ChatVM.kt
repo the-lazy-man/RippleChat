@@ -1,6 +1,7 @@
 package com.example.ripplechat.app.ui.chat
 
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ripplechat.app.data.model.ChatMessage
@@ -37,44 +38,62 @@ class ChatViewModel @Inject constructor(
     fun init(chatId: String, peerUid: String) {
         this.currentChatId = chatId
         this.peerUid = peerUid
+        Log.d("ChatViewModel", "Initializing chat with ID: $chatId, Peer UID: $peerUid") // Add this
+
         // 1) Observe local Room messages first
+        // Observe local Room messages first (map MessageEntity -> ChatMessage)
         viewModelScope.launch {
-            repo.getLocalMessagesFlow(chatId).collect { local ->
-                _messages.value = local
+            repo.getLocalMessagesFlow(chatId).collect { entities ->
+                _messages.value = entities.map {
+                    ChatMessage(
+                        messageId = it.messageId,
+                        chatId = it.chatId,
+                        senderId = it.senderId,
+                        text = it.text,
+                        timestamp = it.timestamp
+                    )
+                }
             }
         }
 
-        // 2) Listen remote and update local
-        messagesListener = repo.listenMessagesRealtime(chatId) { remoteMessages ->
-            viewModelScope.launch {
-                // Insert remote messages into local Room
-                repo.insertLocal(remoteMessages)
-            }
-        }
+        // start remote listener (repo will persist incremental changes to Room)
+        messagesListener = repo.listenMessagesRealtime(chatId)
 
-        // 3) Listen for typing flag
+        // listen typing/metadata
         chatDocListener = repo.listenChatDoc(chatId) { doc ->
-            val key = "typing_${currentUserId}"
             val otherKey = "typing_${peerUid}"
-            val isOtherTyping = (doc?.get(otherKey) as? Boolean) ?: false
-            _otherTyping.value = isOtherTyping
+            _otherTyping.value = (doc?.get(otherKey) as? Boolean) ?: false
         }
     }
 
     fun sendMessage(text: String) {
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return
+
+
+        // 1) generate id
+        val msgId = repo.generateMessageId(chatId)
+
+        // 2) optimistic local insert (same id)
+        val localMsg = ChatMessage(
+            messageId = msgId,
+            chatId = chatId,
+            senderId = sender,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
+
         viewModelScope.launch {
-            repo.sendMessage(chatId, text, sender)
-            // local insert will be handled when Firestore listener fires; but we can also optimistically insert:
-            val localMsg = ChatMessage(
-                messageId = java.util.UUID.randomUUID().toString(),
-                chatId = chatId,
-                senderId = sender,
-                text = text,
-                timestamp = System.currentTimeMillis()
-            )
+            // insert immediately so UI shows message
             repo.insertLocalSingle(localMsg)
+
+            // 3) actually send to Firebase with same id (suspend)
+            try {
+                repo.sendMessageWithId(chatId, msgId, text, sender)
+            } catch (t: Throwable) {
+                // handle send error (e.g., mark as failed, show snackbar)
+            }
+            // When Firestore emits ADDED for the message, repo will insert again (REPLACE) — no duplicate.
         }
     }
 

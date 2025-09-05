@@ -65,6 +65,8 @@ dependencies {
     // Material3 for modern theme
     implementation("androidx.compose.material3:material3:1.2.0")
 
+    implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+
     // Other dependencies
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

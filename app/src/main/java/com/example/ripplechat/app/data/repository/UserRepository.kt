@@ -1,6 +1,7 @@
 package com.example.ripplechat.app.data.repository
 
 import com.example.ripplechat.app.data.model.User
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -11,9 +12,11 @@ import javax.inject.Inject
 
 class UserRepository @Inject constructor(
     private val firestore: FirebaseFirestore,
+    private val auth : FirebaseAuth
 ) {
 
     fun getAllUsersFlow(): Flow<List<User>> = callbackFlow {
+        val uid = auth.currentUser?.uid
         val subscription = firestore.collection("users")
             .addSnapshotListener { snapshot, e ->
                 if (e != null) {
@@ -23,7 +26,7 @@ class UserRepository @Inject constructor(
                 val users = snapshot?.documents?.mapNotNull { doc ->
                     doc.toObject(User::class.java)?.copy(uid = doc.id)
                 }.orEmpty()
-                trySend(users)
+                trySend(users.filter { it.uid != uid })
             }
         awaitClose { subscription.remove() }
     }

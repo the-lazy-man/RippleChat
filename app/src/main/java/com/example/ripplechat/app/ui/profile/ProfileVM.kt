@@ -5,8 +5,10 @@ import androidx.lifecycle.ViewModel
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import javax.inject.Inject
 
 data class ProfileUser(
     val uid: String = "",
@@ -21,8 +23,9 @@ sealed class ProfileState {
     object Success : ProfileState()
     data class Error(val message: String) : ProfileState()
 }
+@HiltViewModel
+class ProfileViewModel @Inject constructor() : ViewModel() {
 
-class ProfileViewModel : ViewModel() {
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
     private val storage = FirebaseStorage.getInstance().reference
@@ -69,5 +72,9 @@ class ProfileViewModel : ViewModel() {
         }.addOnFailureListener {
             updateState = ProfileState.Error(it.localizedMessage ?: "Upload failed")
         }
+    }
+    fun logout(onLoggedOut: () -> Unit) {
+        auth.signOut()  // Firebase sign out
+        onLoggedOut()   // Callback to navigate back to login
     }
 }
