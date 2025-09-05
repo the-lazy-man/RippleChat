@@ -9,7 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.navigation.compose.rememberNavController
-import com.example.ripplechat.app.data.model.ui.theme.navigation.NavGraph
 import com.example.ripplechat.ui.theme.RippleChatTheme
 import dagger.hilt.android.AndroidEntryPoint
 

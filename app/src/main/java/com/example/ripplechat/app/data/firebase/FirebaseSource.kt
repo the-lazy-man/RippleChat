@@ -1,9 +1,12 @@
 package com.example.ripplechat.app.data.model.firebase
 
+import android.util.Log
+import com.example.ripplechat.app.data.model.ChatMessage
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 
 class FirebaseSource(
@@ -17,68 +20,98 @@ class FirebaseSource(
         firestore.collection("users").document(uid).set(map).await()
     }
 
-    // ✅ Get users list (one time fetch)
-    suspend fun getOtherUsers(): List<Pair<String, Map<String, Any>>> {
-        val uid = currentUserUid()
-        val snap = firestore.collection("users").get().await()
-        return snap.documents
-            .filter { it.id != uid }
-            .map { it.id to it.data.orEmpty() }
-    }
+    // non-suspending: generate a new doc id for messages (doesn't write)
+    fun generateMessageId(chatId: String): String =
+        firestore.collection("chats")
+            .document(chatId)
+            .collection("messages")
+            .document()
+            .id
 
-    // ✅ Send a message
-    suspend fun sendMessage(chatId: String, payload: Map<String, Any>) {
+    // suspend: write a message with a specific id
+    suspend fun sendMessageWithId(chatId: String, messageId: String, payload: Map<String, Any>) {
         val ref = firestore.collection("chats")
             .document(chatId)
             .collection("messages")
-            .document() // generate new doc
+            .document(messageId)
 
-        val messageWithId = payload + ("id" to ref.id)
+        // ensure id in payload for convenience
+        val withId = payload + ("id" to messageId)
+        ref.set(withId).await()
 
-        ref.set(messageWithId).await()
-
-        // update chat metadata
-        firestore.collection("chats").document(chatId)
+        // update chat metadata for quick preview in dashboard
+        firestore.collection("chats")
+            .document(chatId)
             .set(
                 mapOf(
                     "lastMessage" to payload["text"],
                     "lastTimestamp" to payload["timestamp"]
                 ),
-                SetOptions.merge()
+                com.google.firebase.firestore.SetOptions.merge()
             )
             .await()
     }
 
-    // ✅ Listen to new messages in a chat (realtime snapshot listener)
-    fun listenMessages(chatId: String, onEvent: (List<Map<String, Any>>) -> Unit): ListenerRegistration {
+    // listenMessages: notify caller for EACH DocumentChange
+    fun listenMessages(chatId: String, onChange: (DocumentChange, ChatMessage) -> Unit): ListenerRegistration {
+        Log.d("FirebaseSource", "Setting up message listener for chat ID: $chatId") // Add this
+
         return firestore.collection("chats")
             .document(chatId)
             .collection("messages")
             .orderBy("timestamp")
             .addSnapshotListener { snapshot, e ->
                 if (e != null || snapshot == null) {
-                    onEvent(emptyList())
+                    Log.e("FirebaseSource", "Message listener error for $chatId: ${e?.message}", e) // Add this
+
                     return@addSnapshotListener
                 }
-                val docs = snapshot.documents.mapNotNull { it.data }
-                onEvent(docs)
+                if (snapshot == null) {
+                    Log.d("FirebaseSource", "Message listener snapshot is null for $chatId")
+                    return@addSnapshotListener
+                }
+
+                Log.d("FirebaseSource", "Message listener triggered for $chatId. Changes: ${snapshot.documentChanges.size}") // Add this
+                for (change in snapshot.documentChanges) {
+                    val d = change.document
+                    val data = d.data ?: continue
+
+                    val ts = (data["timestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time
+                        ?: System.currentTimeMillis()
+
+                    val msg = ChatMessage(
+                        messageId = d.id,
+                        chatId = chatId,
+                        senderId = data["senderId"] as? String ?: "",
+                        text = data["text"] as? String ?: "",
+                        timestamp = ts
+                    )
+                    onChange(change, msg)
+                    Log.d("FirebaseSource", "Processed message change: ${change.type} - ${msg.text}") // Add this
+
+                }
             }
     }
 
-    // ✅ Update typing status in chat doc
+    // typing status
     fun setTyping(chatId: String, uid: String, isTyping: Boolean) {
-        val ref = firestore.collection("chats").document(chatId)
-        ref.update("typing.$uid", isTyping)
+        firestore.collection("chats").document(chatId)
+            .update("typing_$uid", isTyping)
     }
 
-    // ✅ Listen to chat doc for metadata (typing, last seen, etc.)
     fun listenChatDoc(chatId: String, onDoc: (Map<String, Any>?) -> Unit): ListenerRegistration {
+        Log.d("FirebaseSource", "Setting up chat doc listener for chat ID: $chatId") // Add this
         return firestore.collection("chats")
             .document(chatId)
             .addSnapshotListener { snapshot, e ->
                 if (e != null) {
-                    onDoc(null)
-                    return@addSnapshotListener
+                    Log.e("FirebaseSource", "Chat doc listener error for $chatId: ${e.message}", e) // Add this
+                    onDoc(null); return@addSnapshotListener
+                }
+                if (snapshot == null) {
+                    Log.d("FirebaseSource", "Chat doc snapshot is null for $chatId")
+                } else {
+                    Log.d("FirebaseSource", "Chat doc listener triggered for $chatId. Data: ${snapshot.data}") // Add this
                 }
                 onDoc(snapshot?.data)
             }

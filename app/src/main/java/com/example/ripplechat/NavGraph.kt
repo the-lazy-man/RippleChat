@@ -1,12 +1,11 @@
-package com.example.ripplechat.app.data.model.ui.theme.navigation
-
-
+package com.example.ripplechat
 
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.example.ripplechat.app.data.model.ui.theme.screens.home.DashboardScreen
+import com.example.ripplechat.app.data.model.ui.theme.screens.home.ProfileScreen
 import com.example.ripplechat.app.data.model.ui.theme.screens.login.LoginScreen
 import com.example.ripplechat.app.data.model.ui.theme.screens.signup.SignupScreen
 import com.example.ripplechat.app.data.model.ui.theme.screens.splash.SplashScreen
@@ -19,6 +18,7 @@ fun NavGraph(navController: NavHostController) {
         composable("login") { LoginScreen(navController) }
         composable("signup") { SignupScreen(navController) }
         composable("dashboard") { DashboardScreen(navController)  }
+        composable("profile") { ProfileScreen(navController)}
         composable(
             route = "chat/{chatId}/{peerUid}/{peerName}"
         ) { backStackEntry ->
