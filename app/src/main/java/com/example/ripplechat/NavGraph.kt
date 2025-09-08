@@ -1,15 +1,15 @@
 package com.example.ripplechat
 
+import LoginScreen
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.example.ripplechat.app.data.model.ui.theme.screens.home.DashboardScreen
-import com.example.ripplechat.app.data.model.ui.theme.screens.home.ProfileScreen
-import com.example.ripplechat.app.data.model.ui.theme.screens.login.LoginScreen
 import com.example.ripplechat.app.data.model.ui.theme.screens.signup.SignupScreen
 import com.example.ripplechat.app.data.model.ui.theme.screens.splash.SplashScreen
 import com.example.ripplechat.app.ui.chat.ChatScreen
+import com.example.ripplechat.app.ui.profile.ProfileScreen
 
 @Composable
 fun NavGraph(navController: NavHostController) {

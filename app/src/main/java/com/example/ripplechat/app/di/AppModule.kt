@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.example.ripplechat.app.data.local.MessageDao
 import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import com.example.ripplechat.app.data.repository.UserRepository
+import com.example.ripplechat.app.local.AuthPreferences
 import com.example.ripplechat.data.local.AppDatabase
 import com.example.ripplechat.data.repository.ChatRepository
 import com.google.firebase.auth.FirebaseAuth
@@ -12,8 +13,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
-import dagger.hilt.components.SingletonComponent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
 @Module
@@ -46,4 +47,7 @@ object AppModule {
         firestore: FirebaseFirestore,
         auth: FirebaseAuth
     ): UserRepository = UserRepository(firestore,auth)
+
+    @Provides @Singleton
+    fun provideAuthPreferences(@ApplicationContext ctx: Context) = AuthPreferences(ctx)
 }

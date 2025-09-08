@@ -84,5 +84,14 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
+
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // Coil (already using)
+    implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // uCrop for cropping (optional, but used below)
+    implementation("com.github.yalantis:ucrop:2.2.8")
 }

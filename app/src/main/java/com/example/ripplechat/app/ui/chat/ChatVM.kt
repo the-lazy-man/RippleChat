@@ -38,28 +38,29 @@ class ChatViewModel @Inject constructor(
     fun init(chatId: String, peerUid: String) {
         this.currentChatId = chatId
         this.peerUid = peerUid
-        Log.d("ChatViewModel", "Initializing chat with ID: $chatId, Peer UID: $peerUid") // Add this
 
-        // 1) Observe local Room messages first
-        // Observe local Room messages first (map MessageEntity -> ChatMessage)
+        // Observe local Room messages
         viewModelScope.launch {
-            repo.getLocalMessagesFlow(chatId).collect { entities ->
-                _messages.value = entities.map {
-                    ChatMessage(
-                        messageId = it.messageId,
-                        chatId = it.chatId,
-                        senderId = it.senderId,
-                        text = it.text,
-                        timestamp = it.timestamp
-                    )
-                }
+            repo.getLocalMessagesFlow(chatId).collect { list ->
+                _messages.value = list
             }
         }
 
-        // start remote listener (repo will persist incremental changes to Room)
-        messagesListener = repo.listenMessagesRealtime(chatId)
+        // ✅ New repo API integration
+        messagesListener = repo.listenMessagesRealtime(
+            chatId,
+            onAdded = { msg ->
+                viewModelScope.launch { repo.insertOrUpdate(msg) }
+            },
+            onModified = { msg ->
+                viewModelScope.launch { repo.insertOrUpdate(msg) }
+            },
+            onRemoved = { msgId ->
+                viewModelScope.launch { repo.deleteLocal(msgId) }
+            }
+        )
 
-        // listen typing/metadata
+        // Typing indicator
         chatDocListener = repo.listenChatDoc(chatId) { doc ->
             val otherKey = "typing_${peerUid}"
             _otherTyping.value = (doc?.get(otherKey) as? Boolean) ?: false
@@ -70,13 +71,8 @@ class ChatViewModel @Inject constructor(
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return
 
-
-        // 1) generate id
-        val msgId = repo.generateMessageId(chatId)
-
-        // 2) optimistic local insert (same id)
+        // optimistic local insert
         val localMsg = ChatMessage(
-            messageId = msgId,
             chatId = chatId,
             senderId = sender,
             text = text,
@@ -84,16 +80,13 @@ class ChatViewModel @Inject constructor(
         )
 
         viewModelScope.launch {
-            // insert immediately so UI shows message
-            repo.insertLocalSingle(localMsg)
-
-            // 3) actually send to Firebase with same id (suspend)
+            repo.insertOrUpdate(localMsg)
             try {
-                repo.sendMessageWithId(chatId, msgId, text, sender)
+                // ✅ new repo call (with same id)
+                repo.sendMessage(chatId,text, sender)
             } catch (t: Throwable) {
-                // handle send error (e.g., mark as failed, show snackbar)
+                Log.e("ChatViewModel", "sendMessage", t)
             }
-            // When Firestore emits ADDED for the message, repo will insert again (REPLACE) — no duplicate.
         }
     }
 
@@ -121,3 +114,4 @@ class ChatViewModel @Inject constructor(
         removeListeners()
     }
 }
+
