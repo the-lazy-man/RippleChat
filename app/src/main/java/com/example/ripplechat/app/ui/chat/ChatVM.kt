@@ -50,7 +50,9 @@ class ChatViewModel @Inject constructor(
         messagesListener = repo.listenMessagesRealtime(
             chatId,
             onAdded = { msg ->
-                viewModelScope.launch { repo.insertOrUpdate(msg) }
+                if(currentUserId != msg.senderId) {
+                    viewModelScope.launch { repo.insertOrUpdate(msg) }
+                }
             },
             onModified = { msg ->
                 viewModelScope.launch { repo.insertOrUpdate(msg) }

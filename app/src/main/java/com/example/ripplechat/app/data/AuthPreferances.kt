@@ -11,23 +11,23 @@ private val Context.dataStore by preferencesDataStore("auth_prefs")
 
 class AuthPreferences(private val context: Context) {
     companion object {
-        private val KEY_EMAIL = stringPreferencesKey("email")
+        private val KEY_USERNAME = stringPreferencesKey("username")
         private val KEY_PASSWORD = stringPreferencesKey("password")
     }
 
-    val emailFlow: Flow<String> = context.dataStore.data.map { it[KEY_EMAIL] ?: "" }
-    val passwordFlow: Flow<String> = context.dataStore.data.map { it[KEY_PASSWORD] ?: "" }
-
-    suspend fun save(email: String, password: String) {
+    suspend fun save(username: String, password: String) {
         context.dataStore.edit {
-            it[KEY_EMAIL] = email
+            it[KEY_USERNAME] = username
             it[KEY_PASSWORD] = password
         }
+    }
+    val credentialsFlow: Flow<Pair<String?, String?>> = context.dataStore.data.map {
+        it[KEY_USERNAME] to it[KEY_PASSWORD]
     }
 
     suspend fun clear() {
         context.dataStore.edit {
-            it.remove(KEY_EMAIL)
+            it.remove(KEY_USERNAME)
             it.remove(KEY_PASSWORD)
         }
     }

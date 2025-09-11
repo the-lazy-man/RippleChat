@@ -21,9 +21,17 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel = hiltVie
     val context = LocalContext.current
     val state by viewModel.loginState.collectAsState()
 
-    var email by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
     var passVisible by remember { mutableStateOf(false) }
+    val savedCreds by viewModel.savedCredentials.collectAsState(initial = null)
+
+    LaunchedEffect(savedCreds) {
+        savedCreds?.let { (savedUsername, savedPass) ->
+            if (!savedUsername.isNullOrBlank()) username = savedUsername
+            if (!savedPass.isNullOrBlank()) pass = savedPass
+        }
+    }
 
     LaunchedEffect(state) {
         when (state) {
@@ -53,9 +61,9 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel = hiltVie
         Spacer(Modifier.height(24.dp))
 
         OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email") },
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("Username") },   // ✅ Changed from "Email" to "Username"
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
@@ -63,11 +71,11 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel = hiltVie
         Spacer(Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = pass,
+            value = pass.trim(),
             onValueChange = { pass = it },
             label = { Text("Password") },
             singleLine = true,
-            visualTransformation = if (passVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            visualTransformation = if (passVisible) {VisualTransformation.None} else {PasswordVisualTransformation()},
             trailingIcon = {
                 IconButton(onClick = { passVisible = !passVisible }) {
                     Icon(
@@ -83,12 +91,16 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel = hiltVie
         Spacer(Modifier.height(20.dp))
 
         Button(
-            onClick = { viewModel.login(email.trim(), pass.trim()) },
+            onClick = {viewModel.login(username.trim(), pass) },
             modifier = Modifier.fillMaxWidth(),
             enabled = state != AuthState.Loading
         ) {
             if (state == AuthState.Loading) {
-                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Logging in...")
+                }
             } else {
                 Text("Login")
             }

@@ -34,7 +34,7 @@
 users/{uid} {
   name: String,
   email: String,
-  photoUrl: String? // for profile
+  profileImageUrl: String? // for profile
 }
 
 chats/{chatId} {

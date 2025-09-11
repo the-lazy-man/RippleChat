@@ -8,6 +8,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
@@ -26,7 +27,7 @@ data class ProfileUser(
     val uid: String = "",
     val name: String = "",
     val email: String = "",
-    val photoUrl: String? = null
+    val profileImageUrl: String? = null
 )
 sealed class ProfileState { object Idle: ProfileState(); object Loading: ProfileState(); object Success: ProfileState(); data class Error(val message: String): ProfileState() }
 
@@ -50,7 +51,7 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
                     uid = uid,
                     name = it.getString("name") ?: "",
                     email = it.getString("email") ?: "",
-                    photoUrl = it.getString("photoUrl")
+                    profileImageUrl = it.getString("profileImageUrl")
                 )
             }
         }
@@ -96,9 +97,12 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
 
                 ref.putBytes(uploadBytes).await()
                 val url = ref.downloadUrl.await().toString()
+                Log.e("ProfileViewModel", "uploadProcessedPicture: $url")
                 db.collection("users").document(uid)
-                    .update("photoUrl", url)
+                    .update("profileImageUrl", url)
                     .await()
+                // Immediately update local state to reflect new photo URL in UI
+                _user.value = _user.value.copy(profileImageUrl = url)
                 updateState = ProfileState.Success
             } catch (t: Throwable) {
                 updateState = ProfileState.Error(t.localizedMessage ?: "Upload failed")
