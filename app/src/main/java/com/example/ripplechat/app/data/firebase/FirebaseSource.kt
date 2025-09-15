@@ -19,7 +19,7 @@ class FirebaseSource(
             "name" to name,
             "nameIndex" to name.lowercase(),
             "email" to email,
-            "photoUrl" to photoUrl,
+            "profileImageUrl" to photoUrl,
         )
         firestore.collection("users").document(uid).set(map, SetOptions.merge()).await()
     }
@@ -27,15 +27,31 @@ class FirebaseSource(
     // Search users by nameIndex (excludes me)
     suspend fun searchUsersByName(q: String, myUid: String): List<Pair<String, Map<String, Any>>> {
         val lower = q.trim().lowercase()
-        if (lower.isBlank()) return emptyList()
+        if (lower.isBlank()) {
+            val snap = firestore.collection("users").get().await()
+            return snap.documents
+                .filter { it.id != myUid }
+                .map { it.id to it.data.orEmpty() }
+        }
+
         val snap = firestore.collection("users")
             .whereGreaterThanOrEqualTo("nameIndex", lower)
             .whereLessThanOrEqualTo("nameIndex", lower + '\uf8ff')
             .get()
             .await()
-        return snap.documents
+        val result = snap.documents
             .filter { it.id != myUid }
             .map { it.id to it.data.orEmpty() }
+
+        if (result.isEmpty()) {
+            // 🔹 fallback: try filtering locally from ALL users
+            val all = firestore.collection("users").get().await()
+            return all.documents
+                .filter { it.id != myUid }
+                .filter { (it.getString("name") ?: "").lowercase().contains(lower) }
+                .map { it.id to it.data.orEmpty() }
+        }
+        return result
     }
 
     // Contacts
@@ -67,12 +83,18 @@ class FirebaseSource(
         return snaps
     }
 
-    // Messages
-    suspend fun sendMessage(chatId: String, payload: Map<String, Any>) {
+    fun generateMessageId(): String {
+        return firestore.collection("chats").document().collection("messages").document().id
+    }
+
+    // FIX: Add a unique messageId to the function signature
+    suspend fun sendMessage(chatId: String, messageId: String, payload: Map<String, Any>) {
         val ref = firestore.collection("chats").document(chatId)
-            .collection("messages").document()
-        val messageWithId = payload + ("id" to ref.id)
-        ref.set(messageWithId).await()
+            .collection("messages").document(messageId) // Use the unique ID here
+
+        val messageWithId = payload + ("id" to messageId) // Add the ID to the payload
+        ref.set(messageWithId).await() // Now, this correctly sets the message with a unique ID
+
         firestore.collection("chats").document(chatId)
             .set(
                 mapOf(
@@ -81,6 +103,7 @@ class FirebaseSource(
                 ), SetOptions.merge()
             ).await()
     }
+
 
     fun listenMessages(
         chatId: String,

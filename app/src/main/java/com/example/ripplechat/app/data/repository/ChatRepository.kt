@@ -26,6 +26,9 @@ class ChatRepository @Inject constructor(
                 )
             }
         }
+    fun generateMessageId(): String {
+        return firebase.generateMessageId()
+    }
 
     suspend fun insertOrUpdate(msg: ChatMessage) = withContext(Dispatchers.IO) {
         dao.insertMessage(
@@ -43,13 +46,14 @@ class ChatRepository @Inject constructor(
         dao.deleteMessage(messageId)
     }
 
-    suspend fun sendMessage(chatId: String, text: String, senderId: String) {
+    suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String) {
         val payload = mapOf(
             "text" to text,
             "senderId" to senderId,
             "timestamp" to com.google.firebase.Timestamp.now()
         )
-        firebase.sendMessage(chatId, payload)
+        // FIX: The firebase sendMessage function needs to be corrected as well.
+        firebase.sendMessage(chatId, messageId, payload)
     }
 
 

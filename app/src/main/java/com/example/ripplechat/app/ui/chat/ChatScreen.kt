@@ -1,5 +1,3 @@
-package com.example.ripplechat.app.ui.chat
-
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,14 +10,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
+import com.example.ripplechat.app.ui.chat.ChatViewModel
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -36,24 +31,19 @@ fun ChatScreen(
     var text by remember { mutableStateOf("") }
     val coroutine = rememberCoroutineScope()
     var sending by remember { mutableStateOf(false) }
-    var keyboardHeightPx by remember { mutableStateOf(0) }
-    val density = LocalDensity.current
-    val view = LocalView.current
 
+    val listState = rememberLazyListState()
 
     LaunchedEffect(chatId) { viewModel.init(chatId, peerUid) }
-    DisposableEffect(view) {
-        val listener = ViewCompat.setOnApplyWindowInsetsListener(view) { v, insets ->
-            val imeHeight = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
-            keyboardHeightPx = imeHeight
-            insets
-        }
+
+    DisposableEffect(Unit) {
         onDispose { viewModel.removeListeners() }
     }
-    val keyboardHeightDp = with(density) { keyboardHeightPx.toDp() }
-    val listState = rememberLazyListState()
+
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
     }
 
     Scaffold(
@@ -84,14 +74,13 @@ fun ChatScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .imePadding() // ✅ whole screen shifts with keyboard
         ) {
             LazyColumn(
                 state = listState,
+                // Fix: Use padding on the LazyColumn that fills the available space.
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp, vertical = 10.dp),
-//                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(horizontal = 8.dp, vertical = 10.dp)
             ) {
                 items(messages) { msg ->
                     val isMine = msg.senderId == viewModel.currentUserId
@@ -102,12 +91,14 @@ fun ChatScreen(
                         Surface(
                             color = if (isMine)
                                 MaterialTheme.colorScheme.primaryContainer
-                                else
-                                    MaterialTheme.colorScheme.primary,
+                            else
+                                MaterialTheme.colorScheme.primary,
                             shape = MaterialTheme.shapes.medium,
                             tonalElevation = 3.dp,
                             shadowElevation = 2.dp,
-                            modifier = Modifier.padding(vertical = 4.dp, horizontal = 6.dp)
+                            modifier = Modifier
+                                .padding(vertical = 4.dp, horizontal = 6.dp)
+                                .widthIn(max = 250.dp)
                         ) {
                             Text(
                                 msg.text,
@@ -115,7 +106,7 @@ fun ChatScreen(
                                 color = if (isMine)
                                     MaterialTheme.colorScheme.onPrimaryContainer
                                 else
-                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                    MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     }
@@ -125,7 +116,8 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(8.dp)
+                    .imePadding(), // Fix: Keep imePadding() only on the input row
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
@@ -136,7 +128,7 @@ fun ChatScreen(
                         viewModel.scheduleStopTyping()
                     },
                     keyboardOptions = KeyboardOptions.Default.copy(
-                        imeAction = ImeAction.Done // Show "Done" button on keyboard
+                        imeAction = ImeAction.Done
                     ),
                     keyboardActions = KeyboardActions(
                         onDone = {

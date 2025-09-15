@@ -1,17 +1,15 @@
 package com.example.ripplechat.app.data.model.ui.theme.screens.home
 
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ripplechat.app.data.model.User
 import com.example.ripplechat.app.data.model.firebase.FirebaseSource
-import com.example.ripplechat.app.data.repository.UserRepository
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -29,6 +27,7 @@ class DashBoardVM @Inject constructor(
     private val _searchResults = MutableStateFlow<List<User>>(emptyList())
     val searchResults = _searchResults.asStateFlow()
 
+    var showToast  = MutableStateFlow<Boolean>(false)
     private var contactsReg: ListenerRegistration? = null
 
     init {
@@ -42,7 +41,7 @@ class DashBoardVM @Inject constructor(
                         uid = id,
                         name = data["name"] as? String ?: "",
                         email = data["email"] as? String ?: "",
-                        profileImageUrl = data["photoUrl"] as? String
+                        profileImageUrl = data["profileImageUrl"] as? String
                     )
                 }.sortedBy { it.name.lowercase() }
             }
@@ -52,14 +51,20 @@ class DashBoardVM @Inject constructor(
     fun search(query: String) {
         val uid = firebase.currentUserUid() ?: return
         viewModelScope.launch {
-            val pairs = firebase.searchUsersByName(query, uid)
-            _searchResults.value = pairs.map { (id, data) ->
-                User(
-                    uid = id,
-                    name = data["name"] as? String ?: "",
-                    email = data["email"] as? String ?: "",
-                    profileImageUrl = data["photoUrl"] as? String
-                )
+            var pairs = firebase.searchUsersByName(query, uid)
+            try {
+                _searchResults.value = pairs.map { (id, data) ->
+                    User(
+                        uid = id,
+                        name = data["name"] as? String ?: "",
+                        email = data["email"] as? String ?: "",
+                        profileImageUrl = data["profileImageUrl"] as? String
+                    )
+                }
+            }catch (e : Exception){
+                _searchResults.value = emptyList()
+                showToast.value = true
+                Log.e("DashBoardVM", "Error searching users: ${e.message}")
             }
         }
     }

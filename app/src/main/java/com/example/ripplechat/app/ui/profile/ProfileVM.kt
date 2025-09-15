@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 
 data class ProfileUser(
@@ -84,24 +85,57 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
         updateState = ProfileState.Loading
         viewModelScope.launch {
             try {
-                val bmp = withContext(Dispatchers.IO) { loadBitmap(resolver, sourceUri) }
-                val processed = withContext(Dispatchers.Default) { applyBrightness(bmp, brightness) }
-                val path = "profilePics/$uid.jpg"
-                val ref = storage.child(path)
-
-                val uploadBytes = withContext(Dispatchers.IO) {
-                    val stream = java.io.ByteArrayOutputStream()
-                    processed.compress(Bitmap.CompressFormat.JPEG, 90, stream)
-                    stream.toByteArray()
+                val bmp = withContext(Dispatchers.IO) {
+                    loadBitmap(resolver, sourceUri)
                 }
 
+                // 2. Apply brightness (CPU bound → use Default dispatcher)
+                val processed = withContext(Dispatchers.Default) {
+                    applyBrightness(bmp, brightness)
+                }
+
+                // 3. Downscale before compression to avoid OOM / debugger detach
+                val maxDim = 1024 // pixels (tune this depending on your needs)
+                val scaled = withContext(Dispatchers.Default) {
+                    if (processed.width > maxDim || processed.height > maxDim) {
+                        val ratio = processed.width.toFloat() / processed.height.toFloat()
+                        val (newW, newH) = if (ratio > 1) {
+                            maxDim to (maxDim / ratio).toInt()
+                        } else {
+                            (maxDim * ratio).toInt() to maxDim
+                        }
+                        Bitmap.createScaledBitmap(processed, newW, newH, true)
+                    } else {
+                        processed
+                    }
+                }
+
+                // 4. Compress in background (CPU bound → Default dispatcher)
+                val uploadBytes = withContext(Dispatchers.Default) {
+                    val stream = ByteArrayOutputStream()
+                    try {
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream) // 85 keeps good quality
+                        stream.toByteArray()
+                    } finally {
+                        stream.close()
+                    }
+                }
+
+                // 5. Upload to Firebase Storage (I/O bound)
+                val path = "profilePics/$uid.jpg"
+                val ref = storage.child(path)
                 ref.putBytes(uploadBytes).await()
+
+                // 6. Get download URL
                 val url = ref.downloadUrl.await().toString()
-                Log.e("ProfileViewModel", "uploadProcessedPicture: $url")
+                Log.d("ProfileViewModel", "Uploaded profile picture: $url")
+
+                // 7. Update Firestore
                 db.collection("users").document(uid)
                     .update("profileImageUrl", url)
                     .await()
-                // Immediately update local state to reflect new photo URL in UI
+
+                // 8. Update local state
                 _user.value = _user.value.copy(profileImageUrl = url)
                 updateState = ProfileState.Success
             } catch (t: Throwable) {
@@ -134,4 +168,12 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
         canvas.drawBitmap(src, 0f, 0f, paint)
         return ret
     }
+    fun resizeBitmap(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
+        val ratio = minOf(maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height)
+        if (ratio >= 1f) return bitmap // no resize needed
+        val width = (bitmap.width * ratio).toInt()
+        val height = (bitmap.height * ratio).toInt()
+        return Bitmap.createScaledBitmap(bitmap, width, height, true)
+    }
+
 }

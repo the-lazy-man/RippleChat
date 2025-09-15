@@ -75,7 +75,7 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel = hiltVie
             onValueChange = { pass = it },
             label = { Text("Password") },
             singleLine = true,
-            visualTransformation = if (passVisible) {VisualTransformation.None} else {PasswordVisualTransformation()},
+            visualTransformation = if (passVisible) {PasswordVisualTransformation()} else {VisualTransformation.None},
             trailingIcon = {
                 IconButton(onClick = { passVisible = !passVisible }) {
                     Icon(

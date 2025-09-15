@@ -49,10 +49,9 @@ class ChatViewModel @Inject constructor(
         // ✅ New repo API integration
         messagesListener = repo.listenMessagesRealtime(
             chatId,
+            // FIX: Remove the 'if' condition to handle all new messages from Firebase.
             onAdded = { msg ->
-                if(currentUserId != msg.senderId) {
-                    viewModelScope.launch { repo.insertOrUpdate(msg) }
-                }
+                viewModelScope.launch { repo.insertOrUpdate(msg) }
             },
             onModified = { msg ->
                 viewModelScope.launch { repo.insertOrUpdate(msg) }
@@ -64,8 +63,8 @@ class ChatViewModel @Inject constructor(
 
         // Typing indicator
         chatDocListener = repo.listenChatDoc(chatId) { doc ->
-            val otherKey = "typing_${peerUid}"
-            _otherTyping.value = (doc?.get(otherKey) as? Boolean) ?: false
+            val typingMap = doc?.get("typing") as? Map<String, Any>
+            _otherTyping.value = (typingMap?.get(peerUid) as? Boolean) ?: false
         }
     }
 
@@ -75,6 +74,8 @@ class ChatViewModel @Inject constructor(
 
         // optimistic local insert
         val localMsg = ChatMessage(
+            // FIX: Ensure a unique messageId is generated here.
+            messageId = repo.generateMessageId(),
             chatId = chatId,
             senderId = sender,
             text = text,
@@ -84,8 +85,8 @@ class ChatViewModel @Inject constructor(
         viewModelScope.launch {
             repo.insertOrUpdate(localMsg)
             try {
-                // ✅ new repo call (with same id)
-                repo.sendMessage(chatId,text, sender)
+                // FIX: Pass the messageId to the repository.
+                repo.sendMessage(chatId, localMsg.messageId, text, sender)
             } catch (t: Throwable) {
                 Log.e("ChatViewModel", "sendMessage", t)
             }

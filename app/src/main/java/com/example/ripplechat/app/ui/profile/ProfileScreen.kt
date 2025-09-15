@@ -4,21 +4,45 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
+
 @Composable
 fun ProfileScreen(
     navController: NavController,
@@ -31,6 +55,17 @@ fun ProfileScreen(
     var showPreview by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var brightness by remember { mutableFloatStateOf(0f) } // -1..+1
+    val brightnessMatrix = remember(brightness) {
+        ColorMatrix(
+            floatArrayOf(
+                1f, 0f, 0f, 0f, 255f * brightness,
+                0f, 1f, 0f, 0f, 255f * brightness,
+                0f, 0f, 1f, 0f, 255f * brightness,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+    }
+
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -47,20 +82,34 @@ fun ProfileScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         Text("Profile", style = MaterialTheme.typography.headlineSmall)
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Profile Image + Name + Email in Column
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             AsyncImage(
-                model = userState.photoUrl ?: "https://via.placeholder.com/120",
+                model = userState.profileImageUrl
+                    ?: "https://ui-avatars.com/api/?name=${userState.name}",
                 contentDescription = null,
-                modifier = Modifier.size(84.dp).clip(CircleShape)
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape)
             )
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(userState.name, style = MaterialTheme.typography.titleMedium)
-                Text(userState.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(userState.name, style = MaterialTheme.typography.titleMedium)
+            Text(
+                userState.email,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         OutlinedTextField(
@@ -70,9 +119,16 @@ fun ProfileScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { viewModel.updateName(name) }, modifier = Modifier.weight(1f)) { Text("Save") }
-            OutlinedButton(onClick = { launcher.launch("image/*") }, modifier = Modifier.weight(1f)) { Text("Change Photo") }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = { viewModel.updateName(name) },
+                modifier = Modifier.weight(1f)
+            ) { Text("Save") }
+
+            OutlinedButton(
+                onClick = { launcher.launch("image/*") },
+                modifier = Modifier.weight(1f)
+            ) { Text("Change Photo") }
         }
 
         OutlinedButton(
@@ -110,7 +166,9 @@ fun ProfileScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(220.dp)
-                            .clip(MaterialTheme.shapes.medium)
+                            .clip(MaterialTheme.shapes.medium),
+                        colorFilter = ColorFilter.colorMatrix(brightnessMatrix)
+
                     )
                     Text("Brightness")
                     Slider(
