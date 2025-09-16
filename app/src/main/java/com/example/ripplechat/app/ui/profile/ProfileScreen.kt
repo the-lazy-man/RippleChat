@@ -13,17 +13,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -43,6 +49,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     navController: NavController,
@@ -82,104 +89,107 @@ fun ProfileScreen(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Text("Profile", style = MaterialTheme.typography.headlineSmall)
-
-        // Profile Image + Name + Email in Column
+    Scaffold(
+    ) { paddingValues ->
         Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            AsyncImage(
-                model = userState.profileImageUrl
-                    ?: "https://ui-avatars.com/api/?name=${userState.name}",
-                contentDescription = null,
-                modifier = Modifier
-                    .size(120.dp)
-                    .clip(CircleShape)
-            )
-            Text(userState.name, style = MaterialTheme.typography.titleMedium)
-            Text(
-                userState.email,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+            Spacer(modifier = Modifier.height(6.dp))
 
-        OutlinedTextField(
-            value = name,
-            onValueChange = { name = it },
-            label = { Text("Name") },
-            modifier = Modifier.fillMaxWidth()
-        )
+            // Profile Image + Name + Email in Column
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AsyncImage(
+                    model = userState.profileImageUrl
+                        ?: "https://ui-avatars.com/api/?name=${userState.name}",
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(120.dp)
+                        .clip(CircleShape)
+                )
+                Text(userState.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    userState.email,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = { viewModel.updateName(name) },
-                modifier = Modifier.weight(1f)
-            ) { Text("Save") }
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("Name") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { viewModel.updateName(name) },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save") }
+
+                OutlinedButton(
+                    onClick = { launcher.launch("image/*") },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Change Photo") }
+            }
 
             OutlinedButton(
-                onClick = { launcher.launch("image/*") },
-                modifier = Modifier.weight(1f)
-            ) { Text("Change Photo") }
+                onClick = {
+                    viewModel.logout {
+                        navController.navigate("login") {
+                            popUpTo("dashboard") { inclusive = true }
+                        }
+                    }
+                },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Logout") }
         }
 
-        OutlinedButton(
-            onClick = {
-                viewModel.logout {
-                    navController.navigate("login") {
-                        popUpTo("dashboard") { inclusive = true }
+        if (showPreview && pickedUri != null) {
+            AlertDialog(
+                onDismissRequest = { showPreview = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val resolver = ctx.contentResolver
+                        viewModel.uploadProcessedPicture(resolver, pickedUri!!, brightness)
+                        showPreview = false
+                    }) { Text("Upload") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showPreview = false }) { Text("Cancel") }
+                },
+                title = { Text("Preview & Adjust") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        AsyncImage(
+                            model = pickedUri,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp)
+                                .clip(MaterialTheme.shapes.medium),
+                            colorFilter = ColorFilter.colorMatrix(brightnessMatrix)
+
+                        )
+                        Text("Brightness")
+                        Slider(
+                            value = brightness,
+                            onValueChange = { brightness = it },
+                            valueRange = -1f..1f
+                        )
+                        Text("Tip: For cropping, integrate uCrop before upload for a richer UX.")
                     }
                 }
-            },
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Logout") }
-    }
-
-    if (showPreview && pickedUri != null) {
-        AlertDialog(
-            onDismissRequest = { showPreview = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    val resolver = ctx.contentResolver
-                    viewModel.uploadProcessedPicture(resolver, pickedUri!!, brightness)
-                    showPreview = false
-                }) { Text("Upload") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPreview = false }) { Text("Cancel") }
-            },
-            title = { Text("Preview & Adjust") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    AsyncImage(
-                        model = pickedUri,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(MaterialTheme.shapes.medium),
-                        colorFilter = ColorFilter.colorMatrix(brightnessMatrix)
-
-                    )
-                    Text("Brightness")
-                    Slider(
-                        value = brightness,
-                        onValueChange = { brightness = it },
-                        valueRange = -1f..1f
-                    )
-                    Text("Tip: For cropping, integrate uCrop before upload for a richer UX.")
-                }
-            }
-        )
+            )
+        }
     }
 }
-

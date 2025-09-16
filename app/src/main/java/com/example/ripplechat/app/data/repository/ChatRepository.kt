@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import com.google.firebase.Timestamp
 
 class ChatRepository @Inject constructor(
     private val firebase: FirebaseSource,
@@ -26,6 +27,7 @@ class ChatRepository @Inject constructor(
                 )
             }
         }
+
     fun generateMessageId(): String {
         return firebase.generateMessageId()
     }
@@ -46,16 +48,31 @@ class ChatRepository @Inject constructor(
         dao.deleteMessage(messageId)
     }
 
+    // FIX: Correctly formats payload for the fixed FirebaseSource.sendMessage
     suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String) {
         val payload = mapOf(
             "text" to text,
             "senderId" to senderId,
-            "timestamp" to com.google.firebase.Timestamp.now()
+            "timestamp" to Timestamp.now()
         )
-        // FIX: The firebase sendMessage function needs to be corrected as well.
         firebase.sendMessage(chatId, messageId, payload)
     }
 
+    suspend fun editMessage(chatId: String, messageId: String, newText: String) {
+        firebase.editMessage(chatId, messageId, newText)
+    }
+
+    // FIX: Calls the corrected Firebase function
+    suspend fun deleteMessage(chatId: String, messageId: String) {
+        firebase.deleteMessage(chatId, messageId)
+    }
+
+    // Unnecessary `deleteChatForUser` kept minimal as per request
+    suspend fun deleteChatForUser(chatId: String) {
+        dao.clearChat(chatId)
+        // Optionally delete remote messages if desired, but typically only deletes for the viewing user.
+        // firebase.deleteChatMessages(chatId)
+    }
 
     fun listenMessagesRealtime(
         chatId: String,
@@ -67,4 +84,6 @@ class ChatRepository @Inject constructor(
     fun setTyping(chatId: String, uid: String, isTyping: Boolean) = firebase.setTyping(chatId, uid, isTyping)
 
     fun listenChatDoc(chatId: String, onDoc: (Map<String, Any>?) -> Unit) = firebase.listenChatDoc(chatId, onDoc)
+    fun setPresence(uid: String, online: Boolean) = firebase.setPresence(uid, online)
+    fun listenPresence(peerUid: String, onChange: (Boolean, Long?) -> Unit) = firebase.listenPresence(peerUid, onChange)
 }

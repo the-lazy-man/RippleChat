@@ -30,6 +30,81 @@ class DashBoardVM @Inject constructor(
     var showToast  = MutableStateFlow<Boolean>(false)
     private var contactsReg: ListenerRegistration? = null
 
+    // State for all users fetched when search is activated
+    private val _allUsersForSearch = MutableStateFlow<List<User>>(emptyList())
+    val allUsersForSearch = _allUsersForSearch.asStateFlow()
+
+    /**
+     * Removes a peer from the current user's contacts list.
+     */
+    fun removeContact(peerUid: String) {
+        val uid = firebase.currentUserUid() ?: return
+        viewModelScope.launch {
+            try {
+                // The FirebaseSource logic handles removing contacts and deleting the chat
+                firebase.deleteContact(uid, peerUid)
+            } catch (e: Exception) {
+                Log.e("DashBoardVM", "Error removing contact", e)
+            }
+        }
+    }
+
+    /**
+     * Fetches the entire list of users (excluding the current user) for the search/selection view.
+     * This replaces the two conflicting fetchAllUsers implementations.
+     */
+    fun fetchAllUsers() {
+        viewModelScope.launch {
+            try {
+                val pairs = firebase.getAllUsers()
+                _allUsersForSearch.value = pairs.map { (id, data) ->
+                    User(
+                        uid = id,
+                        name = data["name"] as? String ?: "",
+                        email = data["email"] as? String ?: "",
+                        profileImageUrl = data["profileImageUrl"] as? String
+                    )
+                }.filter { it.uid != firebase.currentUserUid() } // Exclude current user
+            } catch (e: Exception) {
+                Log.e("DashBoardVM", "Error fetching all users", e)
+            }
+        }
+    }
+
+    /**
+     * Clears the list of all users used for the search/selection view.
+     */
+    fun clearAllUsersForSearch() {
+        _allUsersForSearch.value = emptyList()
+    }
+
+    /**
+     * Searches users by name.
+     */
+    fun search(query: String) {
+        val uid = firebase.currentUserUid() ?: return
+        viewModelScope.launch {
+            val pairs = firebase.searchUsersByName(query, uid)
+            try {
+                _searchResults.value = pairs.map { (id, data) ->
+                    User(
+                        uid = id,
+                        name = data["name"] as? String ?: "",
+                        email = data["email"] as? String ?: "",
+                        profileImageUrl = data["profileImageUrl"] as? String
+                    )
+                }
+            }catch (e : Exception){
+                _searchResults.value = emptyList()
+                showToast.value = true
+                Log.e("DashBoardVM", "Error searching users: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Initializes the ViewModel by setting up the real-time listener for contacts.
+     */
     init {
         val uid = firebase.currentUserUid() ?: ""
         contactsReg = firebase.listenContacts(uid) { ids ->
@@ -48,31 +123,16 @@ class DashBoardVM @Inject constructor(
         }
     }
 
-    fun search(query: String) {
-        val uid = firebase.currentUserUid() ?: return
-        viewModelScope.launch {
-            var pairs = firebase.searchUsersByName(query, uid)
-            try {
-                _searchResults.value = pairs.map { (id, data) ->
-                    User(
-                        uid = id,
-                        name = data["name"] as? String ?: "",
-                        email = data["email"] as? String ?: "",
-                        profileImageUrl = data["profileImageUrl"] as? String
-                    )
-                }
-            }catch (e : Exception){
-                _searchResults.value = emptyList()
-                showToast.value = true
-                Log.e("DashBoardVM", "Error searching users: ${e.message}")
-            }
-        }
-    }
-
+    /**
+     * Clears the search results state.
+     */
     fun clearSearch() {
         _searchResults.value = emptyList()
     }
 
+    /**
+     * Adds a peer to the current user's contacts list.
+     */
     fun addContact(peerUid: String) {
         val uid = firebase.currentUserUid() ?: return
         viewModelScope.launch { firebase.addContact(uid, peerUid) }
@@ -83,5 +143,3 @@ class DashBoardVM @Inject constructor(
         contactsReg?.remove()
     }
 }
-
-

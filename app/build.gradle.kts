@@ -40,6 +40,7 @@ android {
     }
 }
 dependencies {
+    // ... (Your existing Firebase and core KTX dependencies)
     implementation("com.google.firebase:firebase-analytics")
     implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
     implementation("com.google.firebase:firebase-auth-ktx")
@@ -47,27 +48,32 @@ dependencies {
     implementation ("com.google.firebase:firebase-storage-ktx:20.3.0")
     implementation("com.google.firebase:firebase-crashlytics-ktx")
     implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
-    implementation(libs.hilt.android) // Corrected Hilt dependency
-    kapt(libs.hilt.compiler) // Add Hilt compiler
 
-    // Room (for chat history)
+    // Hilt
+    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+    implementation(libs.hilt.android)
+    kapt(libs.hilt.compiler)
+
+    // Room
     implementation("androidx.room:room-runtime:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
 
-    // Accompanist for Animations
-    implementation("com.google.accompanist:accompanist-navigation-animation:0.34.0")
-
     // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.6.0")
 
-    // Material3 for modern theme
+    // Material 3 (New theme/components)
+    implementation(libs.androidx.material3) // Redundant line removed
     implementation("androidx.compose.material3:material3:1.2.0")
 
+    // Material 2 (REQUIRED for SwipeToDismiss)
+    implementation("androidx.compose.material:material:1.6.8")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // Coroutines
     implementation ("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
-    // Other dependencies
+    // Core Compose Dependencies
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -75,7 +81,11 @@ dependencies {
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
+    implementation(libs.androidx.ui.tooling) // For debug
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
+
+    // uCrop (if needed)
+    implementation("com.github.yalantis:ucrop:2.2.8")
 
     // Testing dependencies
     testImplementation(libs.junit)
@@ -83,15 +93,5 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
-    debugImplementation(libs.androidx.ui.tooling)
-
     debugImplementation(libs.androidx.ui.test.manifest)
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
-
-    // Coil (already using)
-    implementation("io.coil-kt:coil-compose:2.6.0")
-
-    // uCrop for cropping (optional, but used below)
-    implementation("com.github.yalantis:ucrop:2.2.8")
 }

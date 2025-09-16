@@ -23,6 +23,65 @@ class FirebaseSource(
         )
         firestore.collection("users").document(uid).set(map, SetOptions.merge()).await()
     }
+    fun setPresence(uid: String, online: Boolean) {
+        val ref = firestore.collection("presence").document(uid)
+        ref.set(mapOf("online" to online, "lastSeen" to com.google.firebase.Timestamp.now()), SetOptions.merge())
+    }
+
+    fun listenPresence(peerUid: String, onChange: (Boolean, Long?) -> Unit): ListenerRegistration {
+        return firestore.collection("presence").document(peerUid)
+            .addSnapshotListener { snap, e ->
+                if (e != null || snap == null) { onChange(false, null); return@addSnapshotListener }
+                val online = (snap.get("online") as? Boolean) ?: false
+                val ts = (snap.get("lastSeen") as? com.google.firebase.Timestamp)?.toDate()?.time
+                onChange(online, ts)
+            }
+    }
+
+    suspend fun deleteMessage(chatId: String, messageId: String) {
+        firestore.collection("chats").document(chatId)
+            .collection("messages")
+            .document(messageId)
+            .delete()
+            .await()
+    }
+    // 🔹 FirebaseSource.kt
+    suspend fun deleteContact(myUid: String, peerUid: String) {
+        // Delete from my contacts
+        firestore.collection("users").document(myUid)
+            .collection("contacts").document(peerUid).delete().await()
+
+        // Delete chat messages for my side
+        val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
+        deleteChatMessages(chatId)
+    }
+    // FIX: Add missing function to FirebaseSource
+    suspend fun getAllUsers(): List<Pair<String, Map<String, Any>>> {
+        val snap = firestore.collection("users").get().await()
+        val myUid = currentUserUid()
+        return snap.documents
+            .filter { it.id != myUid }
+            .map { it.id to it.data.orEmpty() }
+    }
+
+    suspend fun editMessage(chatId: String, messageId: String, newText: String) {
+        firestore.collection("chats").document(chatId)
+            .collection("messages")
+            .document(messageId)
+            .update(mapOf("text" to newText, "edited" to true))
+            .await()
+    }
+    suspend fun deleteChatMessages(chatId: String) {
+        // WARNING: this can be expensive; we batch delete messages for this chat for current user.
+        val col = firestore.collection("chats").document(chatId).collection("messages").get().await()
+        val batch = firestore.batch()
+        for (doc in col.documents) {
+            batch.delete(doc.reference)
+        }
+        batch.commit().await()
+        // optionally delete chat doc
+        firestore.collection("chats").document(chatId).delete().await()
+    }
 
     // Search users by nameIndex (excludes me)
     suspend fun searchUsersByName(q: String, myUid: String): List<Pair<String, Map<String, Any>>> {
