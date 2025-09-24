@@ -1,4 +1,4 @@
-package com.example.ripplechat.app.ui.profile
+package com.example.ripplechat.profile
 
 import android.content.ContentResolver
 import android.graphics.Bitmap
@@ -11,6 +11,8 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.cloudinary.android.MediaManager
+import com.cloudinary.android.callback.ErrorInfo
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.storage.FirebaseStorage
@@ -23,6 +25,11 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import javax.inject.Inject
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
+import java.io.IOException
+import com.cloudinary.android.callback.UploadCallback
 
 data class ProfileUser(
     val uid: String = "",
@@ -30,10 +37,16 @@ data class ProfileUser(
     val email: String = "",
     val profileImageUrl: String? = null
 )
-sealed class ProfileState { object Idle: ProfileState(); object Loading: ProfileState(); object Success: ProfileState(); data class Error(val message: String): ProfileState() }
+
+sealed class ProfileState {
+    object Idle : ProfileState()
+    object Loading : ProfileState()
+    object Success : ProfileState()
+    data class Error(val message: String) : ProfileState()
+}
 
 @HiltViewModel
-class ProfileViewModel @Inject constructor(): ViewModel() {
+class ProfileViewModel @Inject constructor() : ViewModel() {
     private val auth = FirebaseAuth.getInstance()
     private val db = FirebaseFirestore.getInstance()
     private val storage = FirebaseStorage.getInstance().reference
@@ -43,6 +56,8 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
 
     var updateState: ProfileState = ProfileState.Idle
         private set
+
+    private val client = OkHttpClient()
 
     init {
         val uid = auth.currentUser?.uid ?: ""
@@ -83,19 +98,47 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
     ) {
         val uid = auth.currentUser?.uid ?: return
         updateState = ProfileState.Loading
+
         viewModelScope.launch {
             try {
+                // 1. Get a signed upload signature from the backend
+                val signatureResponse = withContext(Dispatchers.IO) {
+                    try {
+                        val request = Request.Builder()
+                            .url(SIGNATURE_URL)
+                            .get() // Use GET instead of POST
+                            .build()
+                        client.newCall(request).execute()
+                    } catch (e: IOException) {
+                        throw Exception("Network request for signature failed", e)
+                    }
+                }
+
+                if (!signatureResponse.isSuccessful) {
+                    throw Exception("Failed to get signature from server: ${signatureResponse.code}")
+                }
+                val signatureJson = signatureResponse.body?.string()
+                val jsonObject = JSONObject(signatureJson)
+
+                val signature = jsonObject.getString("signature")
+                val timestamp = jsonObject.getLong("timestamp")
+                val cloudName = jsonObject.getString("cloud_name") // Changed to match server key
+                val apiKey = jsonObject.getString("api_key") // Changed to match server key
+                val uploadPreset = jsonObject.getString("upload_preset")
+
+                // Log the successful signature retrieval
+                Log.d("ProfileViewModel", "Successfully retrieved signature and timestamp.")
+
+                // 2. Load, process, and compress bitmap
                 val bmp = withContext(Dispatchers.IO) {
                     loadBitmap(resolver, sourceUri)
                 }
 
-                // 2. Apply brightness (CPU bound → use Default dispatcher)
                 val processed = withContext(Dispatchers.Default) {
                     applyBrightness(bmp, brightness)
                 }
 
-                // 3. Downscale before compression to avoid OOM / debugger detach
-                val maxDim = 1024 // pixels (tune this depending on your needs)
+                val maxDim = 1024
                 val scaled = withContext(Dispatchers.Default) {
                     if (processed.width > maxDim || processed.height > maxDim) {
                         val ratio = processed.width.toFloat() / processed.height.toFloat()
@@ -110,39 +153,81 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
                     }
                 }
 
-                // 4. Compress in background (CPU bound → Default dispatcher)
                 val uploadBytes = withContext(Dispatchers.Default) {
-                    val stream = ByteArrayOutputStream()
-                    try {
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream) // 85 keeps good quality
+                    ByteArrayOutputStream().use { stream ->
+                        scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
                         stream.toByteArray()
-                    } finally {
-                        stream.close()
                     }
                 }
+                Log.d("ProfileViewModel", "Image bytes size: ${uploadBytes.size}")
 
-                // 5. Upload to Firebase Storage (I/O bound)
-                val path = "profilePics/$uid.jpg"
-                val ref = storage.child(path)
-                ref.putBytes(uploadBytes).await()
+                // 3. Upload to Cloudinary using the signature
+                withContext(Dispatchers.IO) {
+                    MediaManager.get().upload(uploadBytes)
+                        .option("resource_type", "image")
+                        .option("public_id", "profile_$uid")
+                        .option("signature", signature)
+                        .option("timestamp", timestamp)
+                        .option("cloud_name", cloudName)
+                        .option("api_key", apiKey)
+                        .option("upload_preset", uploadPreset) // <-- Re-added this option
+                        .callback(object : UploadCallback {
+                            override fun onStart(requestId: String?) {
+                                Log.d("ProfileViewModel", "Starting Cloudinary upload...")
+                            }
 
-                // 6. Get download URL
-                val url = ref.downloadUrl.await().toString()
-                Log.d("ProfileViewModel", "Uploaded profile picture: $url")
+                            override fun onProgress(requestId: String?, bytes: Long, totalBytes: Long) {}
 
-                // 7. Update Firestore
-                db.collection("users").document(uid)
-                    .update("profileImageUrl", url)
-                    .await()
+                            override fun onSuccess(
+                                requestId: String?,
+                                resultData: MutableMap<Any?, Any?>?
+                            ) {
+                                val url = resultData?.get("secure_url") as? String
+                                if (url != null) {
+                                    Log.d("ProfileViewModel", "Uploaded to Cloudinary: $url")
+                                    viewModelScope.launch {
+                                        try {
+                                            db.collection("users").document(uid)
+                                                .update("profileImageUrl", url)
+                                                .await()
 
-                // 8. Update local state
-                _user.value = _user.value.copy(profileImageUrl = url)
-                updateState = ProfileState.Success
+                                            _user.value = _user.value.copy(profileImageUrl = url)
+                                            updateState = ProfileState.Success
+                                        } catch (e: Exception) {
+                                            Log.e("ProfileViewModel", "Firestore update failed: ${e.message}", e)
+                                            updateState =
+                                                ProfileState.Error("Firestore update failed: ${e.message}")
+                                        }
+                                    }
+                                } else {
+                                    Log.e("ProfileViewModel", "Upload succeeded but no URL was returned.")
+                                    updateState = ProfileState.Error("Upload succeeded but no URL")
+                                }
+                            }
+
+                            override fun onError(requestId: String?, error: ErrorInfo?) {
+                                Log.e("ProfileViewModel", "Cloudinary upload failed for request ID $requestId. Error: ${error?.description}. Full Error Info: ${error?.toString()}")
+                                updateState =
+                                    ProfileState.Error(error?.description ?: "Cloudinary upload failed")
+                            }
+
+                            override fun onReschedule(requestId: String?, error: ErrorInfo?) {
+                                Log.e("ProfileViewModel", "Cloudinary upload rescheduled for request ID $requestId. Error: ${error?.description}. Full Error Info: ${error?.toString()}")
+                                updateState =
+                                    ProfileState.Error("Rescheduled: ${error?.description}")
+                            }
+                        })
+
+                        .dispatch()
+                }
             } catch (t: Throwable) {
-                updateState = ProfileState.Error(t.localizedMessage ?: "Upload failed")
+                Log.e("ProfileViewModel", "Processing failed.", t)
+                updateState = ProfileState.Error(t.localizedMessage ?: "Processing failed")
             }
         }
     }
+
+
 
     private fun loadBitmap(resolver: ContentResolver, uri: Uri): Bitmap {
         resolver.openInputStream(uri).use { ins ->
@@ -151,7 +236,6 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
     }
 
     private fun applyBrightness(src: Bitmap, delta: Float): Bitmap {
-        // delta -1..+1 -> convert to CM add
         val scale = 1f
         val translate = 255f * delta
         val cm = ColorMatrix(
@@ -168,6 +252,7 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
         canvas.drawBitmap(src, 0f, 0f, paint)
         return ret
     }
+
     fun resizeBitmap(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
         val ratio = minOf(maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height)
         if (ratio >= 1f) return bitmap // no resize needed
@@ -176,4 +261,7 @@ class ProfileViewModel @Inject constructor(): ViewModel() {
         return Bitmap.createScaledBitmap(bitmap, width, height, true)
     }
 
+    companion object {
+        private const val SIGNATURE_URL = "https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-auth"
+    }
 }

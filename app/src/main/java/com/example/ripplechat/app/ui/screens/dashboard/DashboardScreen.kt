@@ -63,7 +63,7 @@ import coil.compose.AsyncImage
 import com.example.ripplechat.app.data.model.User
 import com.example.ripplechat.app.data.model.ui.theme.screens.home.DashBoardVM
 import com.example.ripplechat.app.ui.profile.ProfileScreen
-import com.example.ripplechat.app.ui.profile.ProfileViewModel
+import com.example.ripplechat.profile.ProfileViewModel
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 

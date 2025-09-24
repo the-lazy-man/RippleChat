@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -31,11 +32,43 @@ fun SignupScreen(
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
 
-    // react to state changes (Success / Error)
+    // Validation states
+    var nameError by remember { mutableStateOf<String?>(null) }
+    var emailError by remember { mutableStateOf<String?>(null) }
+    var passwordError by remember { mutableStateOf<String?>(null) }
+
+    // Real-time validation
+    LaunchedEffect(name) {
+        nameError = when {
+            name.isBlank() -> null // Don't show error for empty field until user tries to submit
+            name.length < 2 -> "Name must be at least 2 characters"
+            name.length > 30 -> "Name must be less than 30 characters"
+            else -> null
+        }
+    }
+
+    LaunchedEffect(email) {
+        emailError = when {
+            email.isBlank() -> null
+            !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches() -> "Please enter a valid email"
+            else -> null
+        }
+    }
+
+    LaunchedEffect(password) {
+        passwordError = when {
+            password.isBlank() -> null
+            password.length < 6 -> "Password must be at least 6 characters"
+            password.length > 128 -> "Password is too long"
+            else -> null
+        }
+    }
+
+    // React to state changes (Success / Error)
     LaunchedEffect(state) {
         when (state) {
             is AuthState.Success -> {
-                Toast.makeText(ctx, "Signup success", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, "Signup successful!", Toast.LENGTH_SHORT).show()
                 // navigate and clear state so next time UI is idle
                 navController.navigate("dashboard") {
                     popUpTo("signup") { inclusive = true }
@@ -43,12 +76,20 @@ fun SignupScreen(
                 viewModel.clearSignupState()
             }
             is AuthState.Error -> {
-                Toast.makeText(ctx, (state as AuthState.Error).message, Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, (state as AuthState.Error).message, Toast.LENGTH_LONG).show()
                 viewModel.clearSignupState()
             }
             else -> { /* Idle / Loading -> no-op */ }
         }
     }
+
+    // Check if form is valid
+    val isFormValid = name.isNotBlank() &&
+            email.isNotBlank() &&
+            password.isNotBlank() &&
+            nameError == null &&
+            emailError == null &&
+            passwordError == null
 
     Column(
         modifier = Modifier
@@ -60,34 +101,80 @@ fun SignupScreen(
         Text("Create account", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
 
+        // Name Field
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
             label = { Text("Name") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            isError = nameError != null,
+            supportingText = nameError?.let {
+                { Text(it, color = MaterialTheme.colorScheme.error) }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                cursorColor = MaterialTheme.colorScheme.primary
+            )
         )
         Spacer(Modifier.height(12.dp))
 
+        // Email Field
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
             label = { Text("Email") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            isError = emailError != null,
+            supportingText = emailError?.let {
+                { Text(it, color = MaterialTheme.colorScheme.error) }
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                cursorColor = MaterialTheme.colorScheme.primary
+            )
         )
         Spacer(Modifier.height(12.dp))
 
+        // Password Field
         OutlinedTextField(
-            value = password.trim(),
+            value = password,
             onValueChange = { password = it },
             label = { Text("Password") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            visualTransformation = if (passwordVisible) {VisualTransformation.None} else {PasswordVisualTransformation()},
+            isError = passwordError != null,
+            supportingText = passwordError?.let {
+                { Text(it, color = MaterialTheme.colorScheme.error) }
+            },
+            visualTransformation = if (passwordVisible) {
+                VisualTransformation.None
+            } else {
+                PasswordVisualTransformation()
+            },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                cursorColor = MaterialTheme.colorScheme.primary
+            ),
             trailingIcon = {
                 IconButton(onClick = { passwordVisible = !passwordVisible }) {
                     Icon(
                         imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (passwordVisible) "Hide password" else {"Show password"}
+                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
                     )
                 }
             }
@@ -95,10 +182,14 @@ fun SignupScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // INLINE LOADER inside the button
+        // Sign Up Button
         Button(
-            onClick = { viewModel.signup(name.trim(), email.trim(), password.trim()) },
-            enabled = state !is AuthState.Loading,
+            onClick = {
+                if (isFormValid) {
+                    viewModel.signup(name.trim(), email.trim(), password.trim())
+                }
+            },
+            enabled = state !is AuthState.Loading && isFormValid,
             modifier = Modifier.fillMaxWidth()
         ) {
             if (state is AuthState.Loading) {
@@ -106,13 +197,29 @@ fun SignupScreen(
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
                         strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Signing up...")
+                    Text("Creating account...")
                 }
             } else {
                 Text("Sign up")
             }
+        }
+
+        // Show form validation message
+        if (!isFormValid && (name.isNotBlank() || email.isNotBlank() || password.isNotBlank())) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = when {
+                    name.isBlank() -> "Please enter your name"
+                    email.isBlank() -> "Please enter your email"
+                    password.isBlank() -> "Please enter a password"
+                    else -> "Please fix the errors above"
+                },
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
         }
 
         Spacer(Modifier.height(12.dp))

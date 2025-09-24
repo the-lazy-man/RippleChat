@@ -84,8 +84,14 @@ dependencies {
     implementation(libs.androidx.ui.tooling) // For debug
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
-    // uCrop (if needed)
     implementation("com.github.yalantis:ucrop:2.2.8")
+    // Core library
+    // All:
+    implementation ("com.cloudinary:cloudinary-android:3.0.2")
+
+// Download + Preprocess:
+    implementation ("com.cloudinary:cloudinary-android-download:3.0.2")
+    implementation ("com.cloudinary:cloudinary-android-preprocess:3.0.2")
 
     // Testing dependencies
     testImplementation(libs.junit)
