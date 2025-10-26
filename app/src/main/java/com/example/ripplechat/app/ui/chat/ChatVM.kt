@@ -44,6 +44,11 @@ class ChatViewModel @Inject constructor(
     private val _isDeletingMessage = MutableStateFlow(false)
     val isDeletingMessage = _isDeletingMessage.asStateFlow()
 
+    // 💡 NEW: Variable to hold the current user's name fetched from the database
+    private var currentUserName: String = "RippleChat User"
+
+
+
 
     fun init(chatId: String, peerUid: String) {
         this.currentChatId = chatId
@@ -56,6 +61,12 @@ class ChatViewModel @Inject constructor(
             }
         }
 
+        currentUserId?.let { uid ->
+            viewModelScope.launch {
+                // NOTE: This assumes repo.getSenderName(uid) is added to the repository
+                currentUserName = repo.getSenderName(uid)
+            }
+        }
         // Realtime Firestore Listener
         messagesListener = repo.listenMessagesRealtime(
             chatId,
@@ -69,18 +80,17 @@ class ChatViewModel @Inject constructor(
             val typingMap = doc?.get("typing") as? Map<String, Any>
             _otherTyping.value = (typingMap?.get(peerUid) as? Boolean) ?: false
         }
+       // ✅ PEER PRESENCE LISTENER IS KEPT HERE
         presenceListener = repo.listenPresence(peerUid) { online, lastSeen ->
             _peerOnline.value = online
             _peerLastSeen.value = lastSeen
         }
 
-        // set myself online when chat screen visible
-        currentUserId?.let { repo.setPresence(it, true) }
     }
 
     fun closeChat() {
-        // Set presence false
-        currentUserId?.let { repo.setPresence(it, false) }
+        // ❌ REMOVED: Set presence false (this is now handled by MainActivity's onStop)
+//        currentUserId?.let { repo.setPresence(it, false) }
         removeListeners()
     }
 
@@ -111,10 +121,12 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
-
+    // In ChatViewModel.kt
+// Replace your existing sendMessage function with this:
     fun sendMessage(text: String) {
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return
+        val receiver = peerUid ?: return // Get the recipient's UID
 
         // FIX: Ensure unique ID is used for both local and remote
         val messageId = repo.generateMessageId()
@@ -132,12 +144,26 @@ class ChatViewModel @Inject constructor(
             try {
                 // FIX: Send the message using the generated ID
                 repo.sendMessage(chatId, messageId, text, sender)
+
+                // ⚡ NEW: Conditional FCM Notification Call
+                val isPeerOnline = peerOnline.value
+                if (!isPeerOnline) {
+                    repo.triggerFcmNotification(
+                        recipientId = receiver,
+                        senderId = sender,
+                        messageText = text,
+                        senderName = currentUserName,
+                        chatId = chatId // This explicitly assigns the value to the chatId parameter
+                    )
+                }
+                Log.d("CurrentUser","$currentUserName")
+
             } catch (t: Throwable) {
                 Log.e("ChatViewModel", "sendMessage failed", t)
             }
         }
     }
-
+    
     fun updateTyping(isTyping: Boolean) {
         val chatId = currentChatId ?: return
         val uid = currentUserId ?: return

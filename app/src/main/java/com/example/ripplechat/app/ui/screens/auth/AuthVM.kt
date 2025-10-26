@@ -2,6 +2,7 @@ package com.example.ripplechat.app.ui.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import com.example.ripplechat.app.local.AuthPreferences
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -22,7 +23,8 @@ sealed class AuthState {
 class AuthViewModel@Inject constructor(
     private val authPrefs: AuthPreferences,
     private val auth: FirebaseAuth,
-    private val db: FirebaseFirestore
+    private val db: FirebaseFirestore,
+    private val firebase: FirebaseSource
 ) : ViewModel() {
 
     private val _loginState = MutableStateFlow<AuthState>(AuthState.Idle)
@@ -59,6 +61,8 @@ class AuthViewModel@Inject constructor(
                 auth.signInWithEmailAndPassword(email, password)
                     .addOnSuccessListener {
                         _loginState.value = AuthState.Success
+                        firebase.saveUserToken(firebase.currentUserUid()!!)
+
                     }
                     .addOnFailureListener {
                         _loginState.value = AuthState.Error(it.localizedMessage ?: "Login failed")
@@ -109,6 +113,7 @@ class AuthViewModel@Inject constructor(
                                 viewModelScope.launch {
                                     authPrefs.save(name, password) // ✅ Save username now
                                 }
+                                firebase.saveUserToken(firebase.currentUserUid()!!)
                             }
                             .addOnFailureListener {
                                 _signupState.value = AuthState.Error(it.localizedMessage ?: "Failed to save user data")

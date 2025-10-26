@@ -1,11 +1,13 @@
 package com.example.ripplechat.app.data.model.firebase
 
+import android.util.Log
 import com.example.ripplechat.app.data.model.ChatMessage
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.tasks.await
 
 class FirebaseSource(
@@ -13,6 +15,22 @@ class FirebaseSource(
     private val firestore: FirebaseFirestore
 ) {
     fun currentUserUid(): String? = auth.currentUser?.uid
+
+    fun saveUserToken(uid: String) {
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            FirebaseFirestore.getInstance()
+                .collection("users")
+                .document(uid)
+                .update("fcmToken", token)
+                .addOnSuccessListener {
+                    Log.d("FirebaseSource", "Token saved: $token")
+                }
+                .addOnFailureListener {
+                    Log.e("FirebaseSource", "Failed to save token: ${it.message}")
+                }
+        }
+    }
+
 
     suspend fun createOrUpdateUser(uid: String, name: String, email: String, photoUrl: String? = null) {
         val map = mapOf(

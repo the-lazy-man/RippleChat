@@ -28,7 +28,6 @@ fun NavGraph(navController: NavHostController) {
             val chatId = backStackEntry.arguments?.getString("chatId") ?: ""
             val peerUid = backStackEntry.arguments?.getString("peerUid") ?: ""
             val peerName = backStackEntry.arguments?.getString("peerName") ?: ""
-
             ChatScreen(
                 navController = navController,
                 chatId = chatId,
