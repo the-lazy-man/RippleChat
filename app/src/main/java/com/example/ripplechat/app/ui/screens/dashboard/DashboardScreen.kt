@@ -21,14 +21,18 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -63,6 +68,7 @@ import coil.compose.AsyncImage
 import com.example.ripplechat.app.data.model.User
 import com.example.ripplechat.app.data.model.ui.theme.screens.home.DashBoardVM
 import com.example.ripplechat.app.ui.profile.ProfileScreen
+import com.example.ripplechat.app.ui.screens.dashboard.AiAssistantDialog
 import com.example.ripplechat.profile.ProfileViewModel
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
@@ -80,12 +86,20 @@ fun DashboardScreen(
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 2 })
     val scope = rememberCoroutineScope()
     val tabs = listOf("Chats", "Profile")
+    val showAssistant = remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Ripple Chat") } // Title can be generic or based on selected tab
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAssistant.value = true }
+            ) {
+                Icon(Icons.Default.Android, contentDescription = "AI Assistant")
+            }
         }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
@@ -111,6 +125,12 @@ fun DashboardScreen(
                     )
                     1 -> ProfileTab(navController = navController, profileVM = profileViewModel)
                 }
+            }
+            // Show AI Assistant dialog when FAB is clicked
+            if (showAssistant.value) {
+                AiAssistantDialog(
+                    onDismiss = { showAssistant.value = false }
+                )
             }
         }
     }
@@ -246,6 +266,7 @@ fun ChatListAndSearchTab(
                             UserCard(
                                 user = user,
                                 onChatClick = chatRoute,
+                                dashboardViewModel = dashboardViewModel,
                                 onAddContact = { },
                                 isContact = true
                             )
@@ -257,6 +278,7 @@ fun ChatListAndSearchTab(
                     UserCard(
                         user = user,
                         onChatClick = chatRoute,
+                       dashboardViewModel = dashboardViewModel,
                         onAddContact = { uid ->
                             scope.launch {
                                 dashboardViewModel.addContact(uid)
@@ -320,10 +342,14 @@ private fun ProfileTab(navController: NavController, profileVM: ProfileViewModel
 @Composable
 private fun UserCard(
     user: User,
+    dashboardViewModel: DashBoardVM ,
     onChatClick: () -> Unit,
     onAddContact: (String) -> Unit,
     isContact: Boolean
 ) {
+    val mutedUsers by dashboardViewModel.mutedUsers.collectAsState(initial = emptySet())
+    // Derive the boolean from the collected state (reusable)
+    val isMuted = user?.let { mutedUsers.contains(it.uid) }
     Card(
         onClick = onChatClick,
         modifier = Modifier
@@ -347,6 +373,26 @@ private fun UserCard(
                 Text(user.name, style = MaterialTheme.typography.titleMedium)
                 if (user.email.isNotEmpty())
                     Text(user.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(
+                onClick = {
+                    // Now use the pre-collected state (no collectAsState() here!)
+                    if (isMuted == true) {
+                        dashboardViewModel.unmuteUser (user.uid)
+                    } else {
+                        dashboardViewModel.muteUser (user.uid)
+                    }
+                }
+            ) {
+                Icon(
+                    // Use the pre-collected state for the condition (no collectAsState() here!)
+                    imageVector = if (isMuted == true) {
+                        Icons.Default.NotificationsOff  // Muted state
+                    } else {
+                        Icons.Default.Notifications    // Not muted state
+                    },
+                    contentDescription = if (isMuted == true) "Unmute Notifications" else "Mute Notifications"
+                )
             }
 
             if (!isContact && !user.uid.isNullOrBlank()) { // Only show Add button if they are NOT a contact

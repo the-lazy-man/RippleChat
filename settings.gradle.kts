@@ -19,7 +19,7 @@ dependencyResolutionManagement {
         maven { url = uri("https://www.jitpack.io") }
     }
 }
-
+// ... (The rest of your settings.gradle.kts)
 rootProject.name = "RippleChat"
 include(":app")
  

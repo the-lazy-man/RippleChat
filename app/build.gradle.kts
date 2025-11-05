@@ -18,7 +18,6 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -37,6 +36,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 dependencies {
@@ -83,6 +83,10 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.ui.tooling) // For debug
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation ("com.google.firebase:firebase-messaging-ktx:24.0.0")
+    // OkHttp Logging Interceptor
+    implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
+
 
     implementation("com.github.yalantis:ucrop:2.2.8")
     // Core library
@@ -100,4 +104,21 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.test.manifest)
+    implementation ("androidx.navigation:navigation-compose:2.7.7")
+    implementation ("androidx.work:work-runtime-ktx:2.9.0")
+
+
+    // In build.gradle (app module)
+    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    implementation("com.squareup.moshi:moshi:1.14.0")
+    implementation("com.squareup.moshi:moshi-kotlin:1.14.0")
+    // Retrofit (for networking)
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    // Converter (for JSON <-> Kotlin data classes)
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    // Coroutine support
+    implementation("com.jakewharton.retrofit:retrofit2-kotlin-coroutines-adapter:0.9.2")
+
 }

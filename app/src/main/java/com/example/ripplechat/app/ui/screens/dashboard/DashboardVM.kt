@@ -4,10 +4,12 @@ package com.example.ripplechat.app.data.model.ui.theme.screens.home
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ripplechat.app.data.local.NotificationPreferences
 import com.example.ripplechat.app.data.model.User
 import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -15,8 +17,22 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DashBoardVM @Inject constructor(
-    private val firebase: FirebaseSource
+    private val firebase: FirebaseSource,
+    private val notificationPreferences: NotificationPreferences
+
 ) : ViewModel() {
+    val mutedUsers: Flow<Set<String>> = notificationPreferences.mutedUsersFlow
+
+    fun muteUser (userId: String) {
+        viewModelScope.launch {
+            notificationPreferences.addMutedUser(userId)
+        }
+    }
+    fun unmuteUser (userId: String) {  // Renamed from removeMutedUser  for clarity
+        viewModelScope.launch {
+            notificationPreferences.removeMutedUser(userId)
+        }
+    }
 
     private val _contacts = MutableStateFlow<Set<String>>(emptySet())
     val contacts = _contacts.asStateFlow()
