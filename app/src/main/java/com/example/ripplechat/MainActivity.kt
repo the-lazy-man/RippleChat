@@ -22,8 +22,8 @@ import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import androidx.work.WorkManager
 import androidx.work.OneTimeWorkRequestBuilder
+import com.example.ripplechat.app.data.local.SetPresenceOffWorker
 import java.util.concurrent.TimeUnit
-import com.example.ripplechat.app.data.local.PresenceWorker
 
 
 @AndroidEntryPoint
@@ -117,7 +117,7 @@ class MainActivity : ComponentActivity() {
             val userId = FirebaseAuth.getInstance().currentUser?.uid
 
             if (userId != null) {
-                val workRequest = OneTimeWorkRequestBuilder<PresenceWorker>()
+                val workRequest = OneTimeWorkRequestBuilder<SetPresenceOffWorker>()
                     .setInitialDelay(10, TimeUnit.SECONDS)
                     .build()
 
