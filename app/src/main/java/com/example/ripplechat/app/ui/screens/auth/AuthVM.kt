@@ -34,7 +34,6 @@ class AuthViewModel@Inject constructor(
     val signupState = _signupState.asStateFlow()
 
     fun login(username: String, password: String) {
-        // Validation
         if (username.isBlank()) {
             _loginState.value = AuthState.Error("Username cannot be empty")
             return
@@ -45,33 +44,50 @@ class AuthViewModel@Inject constructor(
         }
 
         _loginState.value = AuthState.Loading
+
         viewModelScope.launch {
             try {
-                val snap = db.collection("users")
+                // Search by name
+                val byName = db.collection("users")
                     .whereEqualTo("name", username)
                     .get()
                     .await()
 
-                if (snap.isEmpty) {
-                    _loginState.value = AuthState.Error("User not found")
-                    return@launch
+                // Search by email
+                val byEmail = db.collection("users")
+                    .whereEqualTo("email", username)
+                    .get()
+                    .await()
+
+                val snap = when {
+                    !byName.isEmpty -> byName
+                    !byEmail.isEmpty -> byEmail
+                    else -> {
+                        _loginState.value = AuthState.Error("User not found")
+                        return@launch
+                    }
                 }
 
-                val email = snap.documents.first().getString("email") ?: ""
-                auth.signInWithEmailAndPassword(email, password)
-                    .addOnSuccessListener {
-                        _loginState.value = AuthState.Success
-                        firebase.saveUserToken(firebase.currentUserUid()!!)
+                val email = snap.documents.first().getString("email")!!
 
-                    }
-                    .addOnFailureListener {
-                        _loginState.value = AuthState.Error(it.localizedMessage ?: "Login failed")
-                    }
+                // Login with email
+                try {
+                    auth.signInWithEmailAndPassword(email, password).await()
+
+                    _loginState.value = AuthState.Success
+                    firebase.saveUserToken(firebase.currentUserUid()!!)
+
+                } catch (authError: Exception) {
+                    _loginState.value =
+                        AuthState.Error(authError.localizedMessage ?: "Login failed")
+                }
+
             } catch (e: Exception) {
                 _loginState.value = AuthState.Error(e.localizedMessage ?: "Login failed")
             }
         }
     }
+
 
     fun signup(name: String, email: String, password: String) {
         // Input validation

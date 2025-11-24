@@ -66,11 +66,6 @@ fun ChatScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                },
                 title = {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
