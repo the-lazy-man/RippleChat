@@ -55,40 +55,35 @@ class ChatViewModel @Inject constructor(
     private val _peerLastSeen = MutableStateFlow<Long?>(null)
     val peerLastSeen = _peerLastSeen.asStateFlow()
 
-    // State for Delete Loader
     private val _isDeletingMessage = MutableStateFlow(false)
     val isDeletingMessage = _isDeletingMessage.asStateFlow()
 
-    // 💡 NEW Media Upload State
+    // Media Upload State
     private val _isUploadingMedia = MutableStateFlow(false)
     val isUploadingMedia = _isUploadingMedia.asStateFlow()
 
     private val _uploadError = MutableStateFlow<String?>(null)
     val uploadError = _uploadError.asStateFlow()
 
-    // Variable to hold the current user's name fetched from the database
     private var currentUserName: String = "RippleChat User"
 
     private val client = OkHttpClient()
-    // NOTE: SIGNATURE_URL should be in a global config/constants file in a real app
     private val SIGNATURE_URL = "https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-auth"
-
 
     fun clearUploadError() {
         _uploadError.value = null
     }
 
-    // --- Image Processing Helpers (Copied from ProfileViewModel) ---
+    // --- Image Processing Helpers ---
     private fun loadBitmap(resolver: ContentResolver, uri: Uri): Bitmap {
         resolver.openInputStream(uri).use { ins ->
-            // Use !! to assert non-null input stream, safe if uri is verified
             return BitmapFactory.decodeStream(ins!!)
         }
     }
 
     fun resizeBitmap(bitmap: Bitmap, maxWidth: Int, maxHeight: Int): Bitmap {
         val ratio = minOf(maxWidth.toFloat() / bitmap.width, maxHeight.toFloat() / bitmap.height)
-        if (ratio >= 1f) return bitmap // no resize needed
+        if (ratio >= 1f) return bitmap
         val width = (bitmap.width * ratio).toInt()
         val height = (bitmap.height * ratio).toInt()
         return Bitmap.createScaledBitmap(bitmap, width, height, true)
@@ -99,7 +94,6 @@ class ChatViewModel @Inject constructor(
         this.currentChatId = chatId
         this.peerUid = peerUid
 
-        // Observe local Room messages
         viewModelScope.launch {
             repo.getLocalMessagesFlow(chatId).collect { list ->
                 _messages.value = list
@@ -111,7 +105,7 @@ class ChatViewModel @Inject constructor(
                 currentUserName = repo.getSenderName(uid)
             }
         }
-        // Realtime Firestore Listener
+
         messagesListener = repo.listenMessagesRealtime(
             chatId,
             onAdded = { msg -> viewModelScope.launch { repo.insertOrUpdate(msg) } },
@@ -119,7 +113,6 @@ class ChatViewModel @Inject constructor(
             onRemoved = { msgId -> viewModelScope.launch { repo.deleteLocal(msgId) } }
         )
 
-        // Typing indicator and Presence
         chatDocListener = repo.listenChatDoc(chatId) { doc ->
             val typingMap = doc?.get("typing") as? Map<String, Any>
             _otherTyping.value = (typingMap?.get(peerUid) as? Boolean) ?: false
@@ -136,10 +129,11 @@ class ChatViewModel @Inject constructor(
         removeListeners()
     }
 
-    // --- CORE IMAGE UPLOAD LOGIC ---
+    // --- CORE IMAGE UPLOAD LOGIC (UPDATED SIGNATURE) ---
     fun uploadMediaFile(
         resolver: ContentResolver,
-        sourceUri: Uri
+        sourceUri: Uri,
+        caption: String = "" // <--- NEW ARGUMENT ADDED
     ) {
         val uid = currentUserId ?: return
         val chatId = currentChatId ?: return
@@ -149,11 +143,12 @@ class ChatViewModel @Inject constructor(
         val publicId = "chat_media_${chatId}_$fileId"
         val mediaTypeString = "image"
 
+        // Use the caption in the temporary message
         val tempLocalMsg = ChatMessage(
             messageId = fileId,
             chatId = chatId,
             senderId = uid,
-            text = "Uploading Image...",
+            text = if (caption.isNotBlank()) caption else "Uploading Image...", // Use caption or default
             mediaUrl = sourceUri.toString(),
             isMedia = true,
             mediaType = mediaTypeString,
@@ -211,7 +206,8 @@ class ChatViewModel @Inject constructor(
                             override fun onSuccess(requestId: String?, resultData: MutableMap<Any?, Any?>?) {
                                 val url = resultData?.get("secure_url") as? String
                                 if (url != null) {
-                                    sendMediaMessage(fileId, url, "Image", mediaTypeString)
+                                    // Pass the caption from the signature call
+                                    sendMediaMessage(fileId, url, caption, mediaTypeString)
                                 } else {
                                     Log.e("ChatViewModel", "Upload succeeded but no URL returned.")
                                     viewModelScope.launch {
@@ -241,7 +237,6 @@ class ChatViewModel @Inject constructor(
                 }
             } catch (t: Throwable) {
                 // Catches signature/network/processing failure. The message will not be in Room/Firestore.
-                // We only delete if it was inserted, but it's safer to ensure a clean state.
                 repo.deleteLocal(fileId)
                 Log.e("ChatViewModel", "Media file upload/processing failed.", t)
                 viewModelScope.launch {
@@ -261,7 +256,7 @@ class ChatViewModel @Inject constructor(
             messageId = messageId,
             chatId = chatId,
             senderId = sender,
-            text = text,
+            text = text, // Use the provided text (caption)
             mediaUrl = url,
             isMedia = true,
             mediaType = mediaType,
@@ -277,7 +272,7 @@ class ChatViewModel @Inject constructor(
                     repo.triggerFcmNotification(
                         recipientId = receiver,
                         senderId = sender,
-                        messageText = "Image: $text",
+                        messageText = if (text.isNotBlank()) "Image: $text" else "Image sent", // Better FCM text
                         senderName = currentUserName,
                         chatId = chatId
                     )
@@ -289,9 +284,6 @@ class ChatViewModel @Inject constructor(
             }
         }
     }
-    // --- END CORE IMAGE UPLOAD LOGIC ---
-
-    // ... (rest of the functions remain the same)
 
     fun editExistingMessage(messageId: String, newText: String) {
         val chatId = currentChatId ?: return
@@ -375,7 +367,6 @@ class ChatViewModel @Inject constructor(
         presenceListener?.remove()
     }
 
-    // FIX: Add the 'override' keyword back
     override fun onCleared() {
         super.onCleared()
         removeListeners()

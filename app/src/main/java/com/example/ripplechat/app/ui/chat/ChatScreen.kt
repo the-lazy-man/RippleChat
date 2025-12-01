@@ -1,5 +1,6 @@
 package com.example.ripplechat.app.ui.chat
 
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -65,31 +67,47 @@ fun ChatScreen(
     var messageToEdit by remember { mutableStateOf<ChatMessage?>(null) }
     var editInput by remember { mutableStateOf("") }
 
+    // --- MEDIA PREVIEW STATE ---
+    var showMediaPreview by remember { mutableStateOf(false) }
+    var pickedUri by remember { mutableStateOf<Uri?>(null) }
+
+    // --- FULL SCREEN VIEWER STATE ---
+    var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
+
 
     LaunchedEffect(chatId) { viewModel.init(chatId, peerUid) }
     DisposableEffect(Unit) { onDispose { viewModel.removeListeners(); viewModel.closeChat() } }
 
-    // --- SCROLL FIX: JUMP on initial load, ANIMATE on new message ---
     val firstLoadScrollDone = remember { mutableStateOf(false) }
     LaunchedEffect(messages.isNotEmpty()) {
         if (messages.isNotEmpty() && !firstLoadScrollDone.value) {
-            listState.scrollToItem(messages.lastIndex) // Jump to bottom immediately
+            listState.scrollToItem(messages.lastIndex)
             firstLoadScrollDone.value = true
         }
     }
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty() && firstLoadScrollDone.value && !listState.isScrollInProgress) {
-            listState.animateScrollToItem(messages.lastIndex) // Animate on new message
+            listState.animateScrollToItem(messages.lastIndex)
         }
     }
 
-    // --- ERROR TOAST ---
     LaunchedEffect(uploadError) {
         uploadError?.let { msg ->
             Toast.makeText(ctx, "Upload Failed: $msg", Toast.LENGTH_LONG).show()
             viewModel.clearUploadError()
         }
     }
+
+    // --- MEDIA LAUNCHER (TRIGGERS PREVIEW) ---
+    val mediaLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent(),
+        onResult = { uri ->
+            if (uri != null) {
+                pickedUri = uri
+                showMediaPreview = true // <-- CORRECT FIX: Trigger the dialog
+            }
+        }
+    )
 
     Scaffold(
         topBar = {
@@ -114,45 +132,25 @@ fun ChatScreen(
                                 Text("Online", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)))
                             }
                         }
-                        Icon(Icons.Filled.Close, contentDescription = null, tint = if (peerOnline) Color.Green else MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 8.dp).size(10.dp))
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = null,
+                            tint = if (peerOnline) Color.Green else MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(horizontal = 8.dp).size(10.dp)
+                        )
                     }
                 },
                 navigationIcon = {
+                    Spacer(Modifier.width(7.dp))
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
-//                actions = {
-//                    IconButton(onClick = {
-//                        viewModel.removeListeners()
-//                        viewModel.closeChat()
-//                        navController.navigate("dashboard") {
-//                            popUpTo(navController.graph.startDestinationId) { inclusive = true }
-//                        }
-//                    }) {
-//                        Icon(Icons.Default.Close, contentDescription = "Close Chat")
-//                    }
-//                }
             )
         }
     ) { padding ->
 
-        // Global Delete/Upload Loader Overlay
-        if (isDeleting || isUploading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(enabled = false) {}
-                    .background(Color.Black.copy(alpha = 0.3f))
-                    .imePadding()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
-            }
-        }
-
-        // Edit Message Dialog
+        // --- EDIT MESSAGE DIALOG ---
         messageToEdit?.let { msg ->
             AlertDialog(
                 onDismissRequest = { messageToEdit = null },
@@ -181,6 +179,7 @@ fun ChatScreen(
             )
         }
 
+        // --- MAIN CHAT CONTENT ---
         Column(
             modifier = Modifier
                 .padding(padding)
@@ -198,6 +197,7 @@ fun ChatScreen(
                     MessageRow(
                         message = msg,
                         isMine = isMine,
+                        onImageClick = { url -> fullScreenImageUrl = url },
                         onEditClicked = {
                             messageToEdit = msg
                             editInput = msg.text
@@ -243,18 +243,10 @@ fun ChatScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
 
-                val mediaLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.GetContent(),
-                    onResult = { uri ->
-                        if (uri != null) {
-                            val resolver = ctx.contentResolver
-                            viewModel.uploadMediaFile(resolver, uri)
-                        }
-                    }
-                )
                 IconButton(
                     onClick = { mediaLauncher.launch("image/*") },
-                    enabled = !isUploading
+                    enabled = !isUploading,
+                    modifier = Modifier.background(MaterialTheme.colorScheme.primaryContainer)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -283,15 +275,132 @@ fun ChatScreen(
                 }
             }
         }
+
+        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
+        if (isDeleting || isUploading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .clickable(enabled = false) {},
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
+            }
+        }
+
+        // --- FULL SCREEN IMAGE VIEWER (Highest Z-Order) ---
+        fullScreenImageUrl?.let { url ->
+            FullScreenImageViewer(
+                imageUrl = url,
+                onDismiss = { fullScreenImageUrl = null }
+            )
+        }
+
+        // --- MEDIA PREVIEW DIALOG (Renders on top of everything) ---
+        if (showMediaPreview && pickedUri != null) {
+            MediaPreviewDialog(
+                pickedUri = pickedUri!!,
+                onDismiss = { showMediaPreview = false; pickedUri = null },
+                onUpload = { caption ->
+                    val resolver = ctx.contentResolver
+                    viewModel.uploadMediaFile(resolver, pickedUri!!, caption) // Correct call
+                    showMediaPreview = false
+                    pickedUri = null
+                }
+            )
+        }
     }
 }
 
-// Message Row with Media Display Logic
+// --- FULL SCREEN IMAGE VIEWER ---
+@Composable
+fun FullScreenImageViewer(
+    imageUrl: String,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable(onClick = onDismiss)
+            .statusBarsPadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        AsyncImage(
+            model = imageUrl,
+            contentDescription = "Full screen image",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
+        // Dismiss Button (Cross Icon)
+        IconButton(
+            onClick = onDismiss,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.5f))
+        ) {
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "Close",
+                tint = Color.White,
+                modifier = Modifier.size(32.dp)
+            )
+        }
+    }
+}
+
+// --- MEDIA PREVIEW DIALOG ---
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun MediaPreviewDialog(
+    pickedUri: Uri,
+    onDismiss: () -> Unit,
+    onUpload: (caption: String) -> Unit
+) {
+    var caption by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onUpload(caption.trim()) }) { Text("Send") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+        title = { Text("Preview Image") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                AsyncImage(
+                    model = pickedUri,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                        .clip(MaterialTheme.shapes.medium)
+                )
+                OutlinedTextField(
+                    value = caption,
+                    onValueChange = { caption = it },
+                    label = { Text("Caption (Optional)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+            }
+        }
+    )
+}
+
+// --- MESSAGE ROW ---
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageRow(
     message: ChatMessage,
     isMine: Boolean,
+    onImageClick: (String) -> Unit,
     onEditClicked: () -> Unit,
     onDeleteClicked: () -> Unit
 ) {
@@ -300,8 +409,10 @@ fun MessageRow(
         SimpleDateFormat("hh:mm a").format(Date(message.timestamp))
     }
 
-    val bubbleColor = if (isMine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.primary
-    val textColor = if (isMine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary
+    val isMediaMessage = message.isMedia && !message.mediaUrl.isNullOrEmpty()
+
+    val bubbleColor = if (isMediaMessage) Color.Transparent else if (isMine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.primary
+    val textColor = if (isMediaMessage) MaterialTheme.colorScheme.onSurface else if (isMine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -309,21 +420,25 @@ fun MessageRow(
     ) {
         Surface(
             color = bubbleColor,
-            shape = MaterialTheme.shapes.medium,
-            tonalElevation = 3.dp,
-            shadowElevation = 2.dp,
+            shape = if (isMediaMessage) RoundedCornerShape(8.dp) else MaterialTheme.shapes.medium,
+            tonalElevation = if (isMediaMessage) 0.dp else 3.dp,
+            shadowElevation = if (isMediaMessage) 0.dp else 2.dp,
             modifier = Modifier
                 .padding(vertical = 4.dp, horizontal = 6.dp)
                 .widthIn(min = 80.dp, max = 280.dp)
                 .combinedClickable(
-                    onClick = { /* Optional: full screen image view */ },
+                    onClick = {
+                        if (isMediaMessage && message.mediaUrl != null) {
+                            onImageClick(message.mediaUrl)
+                        }
+                    },
                     onLongClick = { showMenu = true }
                 )
         ) {
             Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
 
-                // --- MEDIA DISPLAY ---
-                if (message.isMedia && !message.mediaUrl.isNullOrEmpty()) {
+                if (isMediaMessage && message.mediaUrl != null) {
+                    // --- MEDIA DISPLAY ---
                     AsyncImage(
                         model = message.mediaUrl,
                         contentDescription = message.text,
@@ -331,13 +446,12 @@ fun MessageRow(
                         modifier = Modifier
                             .sizeIn(minWidth = 150.dp, minHeight = 150.dp, maxHeight = 200.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .padding(bottom = 6.dp),
-                        // Fallback/Error/Placeholder can be added here
+                            .padding(bottom = if (message.text.isNotBlank() && message.text != "Uploading Image...") 6.dp else 0.dp)
                     )
                     // Display the accompanying text/caption below the image
-//                    if (message.text.isNotBlank() && message.text != "Uploading Image...") {
-//                        Text(message.text, color = textColor)
-//                    }
+                    if (message.text.isNotBlank() && message.text != "Uploading Image...") {
+                        Text(message.text, color = MaterialTheme.colorScheme.onSurface)
+                    }
                 } else {
                     // --- TEXT DISPLAY ---
                     Text(message.text, color = textColor)
@@ -346,18 +460,18 @@ fun MessageRow(
                 // --- TIMESTAMP ROW ---
                 Row(
                     horizontalArrangement = Arrangement.End,
-                    modifier = Modifier.fillMaxWidth().padding(top = if (message.isMedia) 4.dp else 0.dp)
+                    modifier = Modifier.fillMaxWidth().padding(top = if (isMediaMessage && message.text.isNotBlank()) 4.dp else 0.dp)
                 ) {
                     if (message.edited) {
-                        Text("(Edited)", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp), color = textColor.copy(alpha = 0.6f))
+                        Text("(Edited)", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(end = 4.dp), color = Color.Gray)
                     }
-                    Text(timestampText, style = MaterialTheme.typography.labelSmall, color = textColor.copy(alpha = 0.6f))
+                    Text(timestampText, style = MaterialTheme.typography.labelSmall, color = if (isMediaMessage) Color.Gray else textColor.copy(alpha = 0.6f))
                 }
 
                 // --- DROPDOWN MENU ---
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     if (isMine) {
-                        DropdownMenuItem(text = { Text("Edit") }, onClick = { showMenu = false; onEditClicked() }, enabled = !message.isMedia) // Disable edit for media
+                        DropdownMenuItem(text = { Text("Edit") }, onClick = { showMenu = false; onEditClicked() }, enabled = !isMediaMessage)
                     }
                     DropdownMenuItem(text = { Text("Delete") }, onClick = { showMenu = false; onDeleteClicked() })
                 }
