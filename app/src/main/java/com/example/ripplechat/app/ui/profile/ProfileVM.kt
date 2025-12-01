@@ -30,6 +30,7 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.IOException
 import com.cloudinary.android.callback.UploadCallback
+import okhttp3.MediaType.Companion.toMediaType
 
 data class ProfileUser(
     val uid: String = "",
@@ -99,21 +100,28 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
         val uid = auth.currentUser?.uid ?: return
         updateState = ProfileState.Loading
 
+        val publicId = "profile_$uid" // Calculate the public ID
         viewModelScope.launch {
             try {
-                // 1. Get a signed upload signature from the backend
                 val signatureResponse = withContext(Dispatchers.IO) {
                     try {
+                        val jsonBody = JSONObject().apply {
+                            put("public_id", publicId) // 🚀 FIX: Send the public ID to the backend
+                        }.toString()
+
+                        // Define JSON MediaType
+                        val mediaType = "application/json; charset=utf-8".toMediaType()
+                        val requestBody = okhttp3.RequestBody.create(mediaType, jsonBody)
+
                         val request = Request.Builder()
                             .url(SIGNATURE_URL)
-                            .get() // Use GET instead of POST
+                            .post(requestBody) // <--- CHANGED TO POST
                             .build()
                         client.newCall(request).execute()
                     } catch (e: IOException) {
                         throw Exception("Network request for signature failed", e)
                     }
                 }
-
                 if (!signatureResponse.isSuccessful) {
                     throw Exception("Failed to get signature from server: ${signatureResponse.code}")
                 }
@@ -122,11 +130,9 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
 
                 val signature = jsonObject.getString("signature")
                 val timestamp = jsonObject.getLong("timestamp")
-                val cloudName = jsonObject.getString("cloud_name") // Changed to match server key
-                val apiKey = jsonObject.getString("api_key") // Changed to match server key
-                val uploadPreset = jsonObject.getString("upload_preset")
+                val uploadPreset = jsonObject.getString("upload_preset") // ml_default
 
-                // Log the successful signature retrieval
+
                 Log.d("ProfileViewModel", "Successfully retrieved signature and timestamp.")
 
                 // 2. Load, process, and compress bitmap
@@ -161,16 +167,18 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
                 }
                 Log.d("ProfileViewModel", "Image bytes size: ${uploadBytes.size}")
 
-                // 3. Upload to Cloudinary using the signature
+                // 3. Upload to Cloudinary using the signature (Signed Upload with Preset)
                 withContext(Dispatchers.IO) {
                     MediaManager.get().upload(uploadBytes)
                         .option("resource_type", "image")
-                        .option("public_id", "profile_$uid")
+                        .option("public_id", publicId) // 🚀 FIX: Use the calculated public ID
                         .option("signature", signature)
                         .option("timestamp", timestamp)
-                        .option("cloud_name", cloudName)
-                        .option("api_key", apiKey)
-                        .option("upload_preset", uploadPreset) // <-- Re-added this option
+                        .option("upload_preset", uploadPreset)
+
+                        // Required because the backend signature was generated with this preset
+//                        .option("upload_preset", uploadPreset)
+
                         .callback(object : UploadCallback {
                             override fun onStart(requestId: String?) {
                                 Log.d("ProfileViewModel", "Starting Cloudinary upload...")
@@ -185,8 +193,10 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
                                 val url = resultData?.get("secure_url") as? String
                                 if (url != null) {
                                     Log.d("ProfileViewModel", "Uploaded to Cloudinary: $url")
+
                                     viewModelScope.launch {
                                         try {
+                                            // FIX: Use the CLEANED URL for Firestore/ViewModel update
                                             db.collection("users").document(uid)
                                                 .update("profileImageUrl", url)
                                                 .await()
@@ -217,7 +227,6 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
                                     ProfileState.Error("Rescheduled: ${error?.description}")
                             }
                         })
-
                         .dispatch()
                 }
             } catch (t: Throwable) {
@@ -226,6 +235,7 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
             }
         }
     }
+
 
 
 
@@ -262,6 +272,6 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
     }
 
     companion object {
-        private const val SIGNATURE_URL = "https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-auth"
+        private const val SIGNATURE_URL = "https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-auth" // Localhost for Android emulator
     }
 }
