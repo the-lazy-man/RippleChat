@@ -12,6 +12,7 @@ import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import com.example.ripplechat.app.data.repository.UserRepository
 import com.example.ripplechat.app.local.AuthPreferences
 import com.example.ripplechat.data.local.AppDatabase
+import com.example.ripplechat.data.local.MIGRATION_1_2
 import com.example.ripplechat.data.repository.ChatRepository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -87,7 +88,9 @@ object AppModule {
 
     @Provides @Singleton
     fun provideDatabase(@ApplicationContext ctx: Context): AppDatabase =
-        Room.databaseBuilder(ctx, AppDatabase::class.java, "ripple_chat_db").build()
+        Room.databaseBuilder(ctx, AppDatabase::class.java, "ripple_chat_db")
+            .addMigrations(MIGRATION_1_2) // <-- APPLY MIGRATION HERE
+            .build()
 
     @Provides
     fun provideMessageDao(db: AppDatabase): MessageDao = db.messageDao()

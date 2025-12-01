@@ -202,7 +202,11 @@ class FirebaseSource(
                         senderId = data["senderId"] as? String ?: "",
                         text = data["text"] as? String ?: "",
                         timestamp = (data["timestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time
-                            ?: System.currentTimeMillis()
+                            ?: System.currentTimeMillis(),
+                        edited = (data["edited"] as? Boolean) ?: false, // <-- NEW
+                        mediaUrl = data["mediaUrl"] as? String,         // <-- NEW
+                        isMedia = (data["isMedia"] as? Boolean) ?: false, // <-- NEW
+                        mediaType = data["mediaType"] as? String          // <-- NEW
                     )
                     when (change.type) {
                         DocumentChange.Type.ADDED -> onAdded(msg)

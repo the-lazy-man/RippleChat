@@ -15,6 +15,7 @@ import com.example.ripplechat.app.data.model.FcmRequest // Assuming FcmRequest i
 import com.example.ripplechat.app.data.model.NotificationService // Assuming NotificationService is in this path based on Network.kt
 import kotlinx.coroutines.withContext
 import android.util.Log // For logging network response
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 
@@ -31,7 +32,11 @@ class ChatRepository @Inject constructor(
                     chatId = it.chatId,
                     senderId = it.senderId,
                     text = it.text,
-                    timestamp = it.timestamp
+                    timestamp = it.timestamp,
+                    edited = it.edited,       // <-- MAPPED
+                    mediaUrl = it.mediaUrl,   // <-- MAPPED
+                    isMedia = it.isMedia,     // <-- MAPPED
+                    mediaType = it.mediaType
                 )
             }
         }
@@ -40,6 +45,26 @@ class ChatRepository @Inject constructor(
         return firebase.generateMessageId()
     }
 
+    // In ChatRepository.kt
+
+    suspend fun sendMediaMessage(
+        chatId: String,
+        messageId: String,
+        mediaUrl: String,
+        text: String,
+        senderId: String,
+        mediaType: String // <-- ADDED mediaType for better data
+    ) {
+        val payload = mapOf(
+            "senderId" to senderId,
+            "text" to text,
+            "mediaUrl" to mediaUrl,
+            "isMedia" to true,
+            "mediaType" to mediaType, // <-- ADDED
+            "timestamp" to FieldValue.serverTimestamp()
+        )
+        firebase.sendMessage(chatId, messageId, payload) // Use FirebaseSource
+    }
     suspend fun insertOrUpdate(msg: ChatMessage) = withContext(Dispatchers.IO) {
         dao.insertMessage(
             MessageEntity(
@@ -47,7 +72,11 @@ class ChatRepository @Inject constructor(
                 messageId = msg.messageId,
                 senderId = msg.senderId,
                 text = msg.text,
-                timestamp = msg.timestamp
+                timestamp = msg.timestamp,
+                edited = msg.edited,       // <-- MAPPED
+                mediaUrl = msg.mediaUrl,   // <-- MAPPED
+                isMedia = msg.isMedia,     // <-- MAPPED
+                mediaType = msg.mediaType
             )
         )
     }

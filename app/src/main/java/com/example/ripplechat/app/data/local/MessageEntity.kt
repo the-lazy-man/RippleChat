@@ -10,5 +10,9 @@ data class MessageEntity(
     @PrimaryKey val messageId: String, // Firestore doc id (or local uuid)
     val senderId: String,
     val text: String,
-    val timestamp: Long // epoch millis
+    val timestamp: Long, // epoch millis
+    val edited: Boolean,
+    val mediaUrl: String?,
+    val isMedia: Boolean,
+    val mediaType: String?
 )
