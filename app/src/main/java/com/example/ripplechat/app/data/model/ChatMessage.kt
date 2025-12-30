@@ -8,5 +8,8 @@ data class ChatMessage(
     val senderId: String = "",
     val text: String = "",
     val timestamp: Long = 0,
-    val edited: Boolean = false
-)
+    val edited: Boolean = false,
+    val mediaUrl: String? = null,
+    val isMedia: Boolean = false,
+    val mediaType: String? = null
+)   

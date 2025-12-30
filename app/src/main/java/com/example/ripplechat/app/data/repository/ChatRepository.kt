@@ -10,19 +10,19 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import com.google.firebase.Timestamp
-// Add these imports to ChatRepository.kt
-import com.example.ripplechat.app.data.model.FcmRequest // Assuming FcmRequest is in this path based on Network.kt
-import com.example.ripplechat.app.data.model.NotificationService // Assuming NotificationService is in this path based on Network.kt
-import kotlinx.coroutines.withContext
-import android.util.Log // For logging network response
-import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.tasks.await
+import com.example.ripplechat.app.data.model.FcmRequest
+import com.example.ripplechat.app.data.model.NotificationService
+import android.util.Log
+import com.google.firebase.firestore.FieldValue // Added
+import com.google.firebase.firestore.FirebaseFirestore // Added (already there but ensuring clarity)
+import kotlinx.coroutines.tasks.await // Added (already there but ensuring clarity)
 
 class ChatRepository @Inject constructor(
     private val firebase: FirebaseSource,
     private val dao: MessageDao,
     private val notificationService: NotificationService
 ) {
+    // --- 1. Message Mappings (UPDATED for Media and Edited fields) ---
     fun getLocalMessagesFlow(chatId: String): Flow<List<ChatMessage>> =
         dao.getMessagesFlow(chatId).map { list ->
             list.map {
@@ -31,7 +31,11 @@ class ChatRepository @Inject constructor(
                     chatId = it.chatId,
                     senderId = it.senderId,
                     text = it.text,
-                    timestamp = it.timestamp
+                    timestamp = it.timestamp,
+                    edited = it.edited,       // <-- NEW
+                    mediaUrl = it.mediaUrl,   // <-- NEW
+                    isMedia = it.isMedia,     // <-- NEW
+                    mediaType = it.mediaType  // <-- NEW
                 )
             }
         }
@@ -47,44 +51,87 @@ class ChatRepository @Inject constructor(
                 messageId = msg.messageId,
                 senderId = msg.senderId,
                 text = msg.text,
-                timestamp = msg.timestamp
+                timestamp = msg.timestamp,
+                edited = msg.edited,       // <-- NEW
+                mediaUrl = msg.mediaUrl,   // <-- NEW
+                isMedia = msg.isMedia,     // <-- NEW
+                mediaType = msg.mediaType  // <-- NEW
             )
         )
     }
 
     suspend fun getSenderName(uid: String): String = withContext(Dispatchers.IO) {
-        // Assuming 'firebase' in the repository has access to Firestore
         val doc = FirebaseFirestore.getInstance().collection("users").document(uid).get().await()
         return@withContext doc.getString("name") ?: "RippleChat User"
     }
+
     suspend fun deleteLocal(messageId: String) = withContext(Dispatchers.IO) {
         dao.deleteMessage(messageId)
     }
 
-    // FIX: Correctly formats payload for the fixed FirebaseSource.sendMessage
+    // --- 2. NEW: Self-Delete Chat Logic ---
+
+    // NEW: Function to set auto-delete time on the chat document (Called by ViewModel)
+    suspend fun setChatDeletionTime(chatId: String, durationMillis: Long?) {
+        firebase.setChatDeletionTime(chatId, durationMillis)
+    }
+
+    // NEW: Full chat deletion logic (Called by Worker)
+    suspend fun deleteChatMessagesWithMedia(chatId: String) {
+        // This calls the full cleanup function in FirebaseSource (Firestore + Cloudinary)
+        firebase.deleteChatMessagesWithMedia(chatId)
+        // Clear Room DB (local messages)
+        dao.clearChat(chatId)
+    }
+
+    // 3. UPDATED: Sends a text message.
     suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String) {
         val payload = mapOf(
             "text" to text,
             "senderId" to senderId,
             "timestamp" to Timestamp.now()
         )
+        // FirebaseSource updates the chat document's lastMessage/lastTimestamp
         firebase.sendMessage(chatId, messageId, payload)
     }
+
+    // NEW: Sends a media message.
+    suspend fun sendMediaMessage(
+        chatId: String,
+        messageId: String,
+        mediaUrl: String,
+        text: String,
+        senderId: String,
+        mediaType: String
+    ) {
+        // We create the payload with all required fields
+        val payload = mapOf<String, Any>(
+            "senderId" to senderId,
+            "text" to text,
+            "mediaUrl" to mediaUrl,
+            "isMedia" to true,
+            "mediaType" to mediaType,
+            "timestamp" to FieldValue.serverTimestamp() // Use server timestamp for accuracy
+        )
+        // FirebaseSource handles message creation AND chat doc update
+        firebase.sendMessage(chatId, messageId, payload)
+    }
+
 
     suspend fun editMessage(chatId: String, messageId: String, newText: String) {
         firebase.editMessage(chatId, messageId, newText)
     }
 
-    // FIX: Calls the corrected Firebase function
+    // FIX: Calls the corrected Firebase function AND deletes locally (since listener won't remove it)
     suspend fun deleteMessage(chatId: String, messageId: String) {
         firebase.deleteMessage(chatId, messageId)
+        deleteLocal(messageId) // Add local delete here as this is an explicit user action
     }
 
     // Unnecessary `deleteChatForUser` kept minimal as per request
     suspend fun deleteChatForUser(chatId: String) {
         dao.clearChat(chatId)
-        // Optionally delete remote messages if desired, but typically only deletes for the viewing user.
-        // firebase.deleteChatMessages(chatId)
+        // ... (rest of the logic)
     }
 
     fun listenMessagesRealtime(
@@ -94,9 +141,7 @@ class ChatRepository @Inject constructor(
         onRemoved: (String) -> Unit
     ) = firebase.listenMessages(chatId, onAdded, onModified, onRemoved)
 
-    /* Triggers the external server to send an FCM notification to the peer.
-    * This is only called when the peer is determined to be offline.
-    */
+    /* Triggers the external server to send an FCM notification to the peer. */
     suspend fun triggerFcmNotification(
         recipientId: String,
         senderId: String,
