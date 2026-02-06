@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -59,7 +60,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -72,8 +72,6 @@ import com.example.ripplechat.app.ui.screens.dashboard.AiAssistantDialog
 import com.example.ripplechat.profile.ProfileViewModel
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
-
-// Assume showToast is available or implemented/removed if not.
 
 // Main Screen with Tabs
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -91,7 +89,7 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Ripple Chat") } // Title can be generic or based on selected tab
+                title = { Text("Ripple Chat") }
             )
         },
         floatingActionButton = {
@@ -118,7 +116,6 @@ fun DashboardScreen(
                 modifier = Modifier.fillMaxSize()
             ) { page ->
                 when (page) {
-                    // FIX: Renamed the complicated logic into a dedicated composable
                     0 -> ChatListAndSearchTab(
                         navController = navController,
                         dashboardViewModel = dashboardViewModel
@@ -147,7 +144,7 @@ fun ChatListAndSearchTab(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     var searchQuery by remember { mutableStateOf("") }
-    var isSearchActive by remember { mutableStateOf(false) } // Controls whether search results or contacts are shown
+    var isSearchActive by remember { mutableStateOf(false) }
 
     val currentUser = FirebaseAuth.getInstance().currentUser
 
@@ -187,7 +184,7 @@ fun ChatListAndSearchTab(
                         searchQuery = ""
                         isSearchActive = false
                         dashboardViewModel.clearSearch()
-                        dashboardViewModel.clearAllUsersForSearch() // Clear the all-users list too
+                        dashboardViewModel.clearAllUsersForSearch()
                         keyboardController?.hide()
                     }) {
                         Icon(Icons.Default.Close, null)
@@ -198,32 +195,32 @@ fun ChatListAndSearchTab(
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .onFocusChanged { state ->
                     if (state.isFocused && !isSearchActive) {
                         isSearchActive = true
-                        dashboardViewModel.fetchAllUsers() // Preload all users
+                        dashboardViewModel.fetchAllUsers()
                     }
                 }
         )
 
         // Title for the List
-        if (isSearchActive && listToShow.isEmpty()) {
+        if (isSearchActive && listToShow.isEmpty() && searchQuery.isBlank()) {
             Text(
                 "Find new friends above!",
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier.padding(horizontal = 16.dp),
                 style = MaterialTheme.typography.labelMedium
             )
         } else if (searchQuery.isNotBlank()) {
             Text(
                 "Search results",
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier.padding(horizontal = 16.dp),
                 style = MaterialTheme.typography.labelMedium
             )
         } else if (!isSearchActive && chatUsers.isNotEmpty()) {
             Text(
                 "Your Chats",
-                modifier = Modifier.padding(horizontal = 12.dp),
+                modifier = Modifier.padding(horizontal = 16.dp),
                 style = MaterialTheme.typography.labelMedium
             )
         }
@@ -232,11 +229,10 @@ fun ChatListAndSearchTab(
         // 📋 User lists
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             items(listToShow, key = { it.uid }) { user ->
-                // Check if the current user object is an existing contact
                 val isActualContact = chatUsers.any { it.uid == user.uid } && !isSearchActive && searchQuery.isEmpty()
 
                 val chatRoute = {
@@ -253,7 +249,7 @@ fun ChatListAndSearchTab(
                             if (value == SwipeToDismissBoxValue.EndToStart) {
                                 contactToDelete = user
                                 showDeleteDialog = true
-                                false // Prevent auto-remove, wait for dialog confirmation
+                                false
                             } else false
                         }
                     )
@@ -278,11 +274,10 @@ fun ChatListAndSearchTab(
                     UserCard(
                         user = user,
                         onChatClick = chatRoute,
-                       dashboardViewModel = dashboardViewModel,
+                        dashboardViewModel = dashboardViewModel,
                         onAddContact = { uid ->
                             scope.launch {
                                 dashboardViewModel.addContact(uid)
-                                // Close search view after adding a contact
                                 isSearchActive = false
                                 searchQuery = ""
                                 keyboardController?.hide()
@@ -298,11 +293,9 @@ fun ChatListAndSearchTab(
         if (showDeleteDialog && contactToDelete != null) {
             val userToDelete = contactToDelete!!
             AlertDialog(
-                onDismissRequest = {
-                    showDeleteDialog = false
-                },
+                onDismissRequest = { showDeleteDialog = false },
                 title = { Text("Delete Contact") },
-                text = { Text("Are you sure you want to delete ${userToDelete.name}?") },
+                text = { Text("Are you sure you want to delete ${userToDelete.name} and clear the chat history?") },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -311,19 +304,12 @@ fun ChatListAndSearchTab(
                                 contactToDelete = null
                                 showDeleteDialog = false
                             }
-                        }
-                    ) {
-                        Text("Delete")
-                    }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) { Text("Delete") }
                 },
                 dismissButton = {
-                    Button(
-                        onClick = {
-                            showDeleteDialog = false
-                        }
-                    ) {
-                        Text("Cancel")
-                    }
+                    Button(onClick = { showDeleteDialog = false }) { Text("Cancel") }
                 }
             )
         }
@@ -333,7 +319,6 @@ fun ChatListAndSearchTab(
 // --- Tab Content 2: Profile Screen ---
 @Composable
 private fun ProfileTab(navController: NavController, profileVM: ProfileViewModel) {
-    // The ProfileScreen now handles its own Scaffold/TopAppBar
     ProfileScreen(navController, profileVM)
 }
 
@@ -348,13 +333,12 @@ private fun UserCard(
     isContact: Boolean
 ) {
     val mutedUsers by dashboardViewModel.mutedUsers.collectAsState(initial = emptySet())
-    // Derive the boolean from the collected state (reusable)
-    val isMuted = user?.let { mutedUsers.contains(it.uid) }
+    val isMuted = user.uid.let { mutedUsers.contains(it) }
+
     Card(
         onClick = onChatClick,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp, horizontal = 8.dp)
     ) {
         Row(
             Modifier.padding(16.dp),
@@ -365,7 +349,7 @@ private fun UserCard(
                     ?: "https://ui-avatars.com/api/?name=${user.name}",
                 contentDescription = null,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(40.dp) // Increased size for profile picture
                     .clip(CircleShape)
             )
             Spacer(Modifier.width(16.dp))
@@ -374,10 +358,13 @@ private fun UserCard(
                 if (user.email.isNotEmpty())
                     Text(user.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+
+            Spacer(Modifier.width(8.dp)) // Spacing before icons/buttons
+
+            // Mute/Unmute Button
             IconButton(
                 onClick = {
-                    // Now use the pre-collected state (no collectAsState() here!)
-                    if (isMuted == true) {
+                    if (isMuted) {
                         dashboardViewModel.unmuteUser (user.uid)
                     } else {
                         dashboardViewModel.muteUser (user.uid)
@@ -385,22 +372,18 @@ private fun UserCard(
                 }
             ) {
                 Icon(
-                    // Use the pre-collected state for the condition (no collectAsState() here!)
-                    imageVector = if (isMuted == true) {
-                        Icons.Default.NotificationsOff  // Muted state
-                    } else {
-                        Icons.Default.Notifications    // Not muted state
-                    },
-                    contentDescription = if (isMuted == true) "Unmute Notifications" else "Mute Notifications"
+                    imageVector = if (isMuted) Icons.Default.NotificationsOff else Icons.Default.Notifications,
+                    contentDescription = if (isMuted) "Unmute Notifications" else "Mute Notifications",
+                    modifier = Modifier.size(24.dp)
                 )
             }
 
-            if (!isContact && !user.uid.isNullOrBlank()) { // Only show Add button if they are NOT a contact
-                Button(
-                    onClick = { onAddContact(user.uid) }
-                ) { Text("Add") }
+            // Chat/Add Button
+            if (!isContact && !user.uid.isNullOrBlank()) {
+                Button(onClick = { onAddContact(user.uid) }) { Text("Add") }
             } else {
-                Icon(Icons.Default.ArrowForward, contentDescription = "Open Chat")
+                Spacer(Modifier.width(4.dp)) // Small space before the arrow
+                Icon(Icons.Default.ArrowForward, contentDescription = "Open Chat", modifier = Modifier.size(24.dp))
             }
         }
     }
