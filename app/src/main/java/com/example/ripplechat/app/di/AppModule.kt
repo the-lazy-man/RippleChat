@@ -118,4 +118,11 @@ object AppModule {
             context.preferencesDataStoreFile("notification_prefs")
         }
     }
+
+    // WorkManager Provider
+    @Provides
+    @Singleton
+    fun provideWorkManager(@ApplicationContext context: Context): androidx.work.WorkManager {
+        return androidx.work.WorkManager.getInstance(context)
+    }
 }

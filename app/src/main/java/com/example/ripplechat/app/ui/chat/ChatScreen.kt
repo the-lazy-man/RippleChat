@@ -19,6 +19,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -74,10 +76,15 @@ fun ChatScreen(
     // --- FULL SCREEN VIEWER STATE ---
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
 
+    // --- AUTO-DELETE MENU STATE ---
+    var showDeleteMenu by remember { mutableStateOf(false) }
+    val deletionTime by viewModel.deletionTimeMillis.collectAsState()
+    val timeRemaining by viewModel.timeRemaining.collectAsState() // From ViewModel
 
     LaunchedEffect(chatId) { viewModel.init(chatId, peerUid) }
     DisposableEffect(Unit) { onDispose { viewModel.removeListeners(); viewModel.closeChat() } }
 
+    // --- SCROLL FIX: JUMP on initial load, ANIMATE on new message ---
     val firstLoadScrollDone = remember { mutableStateOf(false) }
     LaunchedEffect(messages.isNotEmpty()) {
         if (messages.isNotEmpty() && !firstLoadScrollDone.value) {
@@ -91,6 +98,7 @@ fun ChatScreen(
         }
     }
 
+    // --- ERROR TOAST ---
     LaunchedEffect(uploadError) {
         uploadError?.let { msg ->
             Toast.makeText(ctx, "Upload Failed: $msg", Toast.LENGTH_LONG).show()
@@ -104,11 +112,12 @@ fun ChatScreen(
         onResult = { uri ->
             if (uri != null) {
                 pickedUri = uri
-                showMediaPreview = true // <-- CORRECT FIX: Trigger the dialog
+                showMediaPreview = true
             }
         }
     )
 
+    // --- MAIN SCAFFOLD ---
     Scaffold(
         topBar = {
             TopAppBar(
@@ -120,7 +129,6 @@ fun ChatScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(peerName, style = MaterialTheme.typography.titleMedium)
-
                             if (typing) {
                                 Text("$peerName is typing...", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.primary))
                             } else if (!peerOnline) {
@@ -132,25 +140,114 @@ fun ChatScreen(
                                 Text("Online", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)))
                             }
                         }
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = null,
-                            tint = if (peerOnline) Color.Green else MaterialTheme.colorScheme.error,
-                            modifier = Modifier.padding(horizontal = 8.dp).size(10.dp)
-                        )
+                        // Status Indicator (Simplified)
+                        Box(modifier = Modifier.padding(horizontal = 8.dp).size(10.dp).clip(CircleShape).background(if (peerOnline) Color.Green else MaterialTheme.colorScheme.error))
                     }
                 },
                 navigationIcon = {
-                    Spacer(Modifier.width(7.dp))
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    // NEW: Countdown Text and Auto-Delete Menu
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        timeRemaining?.let { time ->
+                            Text(
+                                text = time,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(end = 8.dp)
+                            )
+                        }
+
+                        IconButton(onClick = { showDeleteMenu = true }) {
+                            Icon(
+                                imageVector = if (deletionTime != null) Icons.Filled.Schedule else Icons.Filled.MoreVert,
+                                contentDescription = "Auto-delete settings",
+                                tint = if (deletionTime != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        // Menu for Auto-Delete Settings
+                        DropdownMenu(
+                            expanded = showDeleteMenu,
+                            onDismissRequest = { showDeleteMenu = false }
+                        ) {
+                            Text(
+                                "Auto-delete messages after:",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Divider()
+
+                            // --- Menu Items (with proper check for selected state) ---
+                            listOf(5000L to "5 Seconds", 60000L to "1 Minute", 3600000L to "1 Hour", 86400000L to "24 Hours", 604800000L to "7 Days").forEach { (time, label) ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (deletionTime == time) {
+                                                Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp).padding(end = 4.dp), tint = MaterialTheme.colorScheme.primary)
+                                            } else {
+                                                Spacer(Modifier.width(22.dp))
+                                            }
+                                            Text(label)
+                                        }
+                                    },
+                                    onClick = {
+                                        viewModel.setDeletionTime(time)
+                                        showDeleteMenu = false
+                                        Toast.makeText(ctx, "Messages will auto-delete in $label", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+
+                            if (deletionTime != null) {
+                                Divider()
+                                DropdownMenuItem(
+                                    text = { Text("Off", color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        viewModel.setDeletionTime(null)
+                                        showDeleteMenu = false
+                                        Toast.makeText(ctx, "Auto-delete disabled", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
+                            }
+                        }
+
+                        // Close Chat Action (Moved out of the DropdownMenu)
+                        IconButton(onClick = {
+                            viewModel.removeListeners()
+                            viewModel.closeChat()
+                            navController.navigate("dashboard") {
+                                popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                            }
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close Chat")
+                        }
                     }
                 }
             )
         }
     ) { padding ->
 
-        // --- EDIT MESSAGE DIALOG ---
+        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
+        if (isDeleting || isUploading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .clickable(enabled = false) {}
+                    .padding(padding) // Apply TopBar padding
+                    .statusBarsPadding(), // Ensures it doesn't overlap system status bar
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
+            }
+        }
+
+        // --- EDIT MESSAGE DIALOG --- (Renders on top of content but under loader)
         messageToEdit?.let { msg ->
             AlertDialog(
                 onDismissRequest = { messageToEdit = null },
@@ -165,17 +262,9 @@ fun ChatScreen(
                     )
                 },
                 confirmButton = {
-                    Button(
-                        onClick = {
-                            viewModel.editExistingMessage(msg.messageId, editInput.trim())
-                            messageToEdit = null
-                        },
-                        enabled = editInput.isNotBlank() && editInput.trim() != msg.text.trim()
-                    ) { Text("Save") }
+                    Button(onClick = { viewModel.editExistingMessage(msg.messageId, editInput.trim()); messageToEdit = null }, enabled = editInput.isNotBlank() && editInput.trim() != msg.text.trim()) { Text("Save") }
                 },
-                dismissButton = {
-                    TextButton(onClick = { messageToEdit = null }) { Text("Cancel") }
-                }
+                dismissButton = { TextButton(onClick = { messageToEdit = null }) { Text("Cancel") } }
             )
         }
 
@@ -228,12 +317,7 @@ fun ChatScreen(
                     keyboardActions = KeyboardActions(onDone = {
                         if (text.isNotBlank() && !sending && !isUploading) {
                             sending = true
-                            coroutine.launch {
-                                viewModel.sendMessage(text.trim())
-                                text = ""
-                                viewModel.updateTyping(false)
-                                sending = false
-                            }
+                            coroutine.launch { viewModel.sendMessage(text.trim()); text = ""; viewModel.updateTyping(false); sending = false }
                         }
                     }),
                     modifier = Modifier.weight(1f),
@@ -245,14 +329,13 @@ fun ChatScreen(
 
                 IconButton(
                     onClick = { mediaLauncher.launch("image/*") },
-                    enabled = !isUploading,
-                    modifier = Modifier.background(MaterialTheme.colorScheme.primaryContainer)
+                    enabled = !isUploading
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Attach Media",
                         modifier = Modifier
-                            .rotate(90f)
+                            .rotate(270f)
                             .size(24.dp)
                     )
                 }
@@ -261,12 +344,7 @@ fun ChatScreen(
                     onClick = {
                         if (text.isNotBlank() && !sending && !isUploading) {
                             sending = true
-                            coroutine.launch {
-                                viewModel.sendMessage(text.trim())
-                                text = ""
-                                viewModel.updateTyping(false)
-                                sending = false
-                            }
+                            coroutine.launch { viewModel.sendMessage(text.trim()); text = ""; viewModel.updateTyping(false); sending = false }
                         }
                     },
                     enabled = text.isNotBlank() && !sending && !isUploading
@@ -276,20 +354,7 @@ fun ChatScreen(
             }
         }
 
-        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
-        if (isDeleting || isUploading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.3f))
-                    .clickable(enabled = false) {},
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
-            }
-        }
-
-        // --- FULL SCREEN IMAGE VIEWER (Highest Z-Order) ---
+        // --- FULL SCREEN IMAGE VIEWER (Renders on top of content/loader) ---
         fullScreenImageUrl?.let { url ->
             FullScreenImageViewer(
                 imageUrl = url,
@@ -297,14 +362,14 @@ fun ChatScreen(
             )
         }
 
-        // --- MEDIA PREVIEW DIALOG (Renders on top of everything) ---
+        // --- MEDIA PREVIEW DIALOG (Renders on top of content/loader) ---
         if (showMediaPreview && pickedUri != null) {
             MediaPreviewDialog(
                 pickedUri = pickedUri!!,
                 onDismiss = { showMediaPreview = false; pickedUri = null },
                 onUpload = { caption ->
                     val resolver = ctx.contentResolver
-                    viewModel.uploadMediaFile(resolver, pickedUri!!, caption) // Correct call
+                    viewModel.uploadMediaFile(resolver, pickedUri!!, caption)
                     showMediaPreview = false
                     pickedUri = null
                 }

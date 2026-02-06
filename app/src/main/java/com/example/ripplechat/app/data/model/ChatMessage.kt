@@ -10,6 +10,6 @@ data class ChatMessage(
     val timestamp: Long = 0,
     val edited: Boolean = false,
     val mediaUrl: String? = null,
-    val isMedia: Boolean = false,  // Flag to indicate this is a media message
+    val isMedia: Boolean = false,
     val mediaType: String? = null
-)
+)   
