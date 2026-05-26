@@ -42,8 +42,9 @@ class DeleteChatMessagesWorker(
         }
 
         return try {
-            // Delete all messages in the chat with media cleanup
-            chatRepository.deleteChatMessagesWithMedia(chatId)
+            // Delete all messages in the chat (simple deletion without Cloudinary cleanup)
+            // Note: If you need Cloudinary cleanup, you'll need to restore deleteChatMessagesWithMedia
+            chatRepository.deleteChatForUser(chatId)
             Log.d(TAG, "All messages deleted successfully in chat: $chatId")
             Result.success()
         } catch (e: Exception) {

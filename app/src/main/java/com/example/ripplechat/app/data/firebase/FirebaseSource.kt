@@ -1,12 +1,14 @@
-package com.example.ripplechat.app.data.model.firebase
+    package com.example.ripplechat.app.data.model.firebase
 
 import android.util.Log
 import com.example.ripplechat.app.data.model.ChatMessage
+import com.example.ripplechat.app.data.model.Status
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.tasks.await
@@ -58,58 +60,12 @@ class FirebaseSource(
             }
     }
 
-    private fun deleteCloudinaryMedia(mediaUrl: String) {
-        try {
-            // Extract public_id from Cloudinary URL
-            // Format: https://res.cloudinary.com/{cloud_name}/{resource_type}/upload/v{version}/{public_id}.{format}
-            val publicId = extractPublicIdFromUrl(mediaUrl)
-            if (publicId.isNullOrBlank()) {
-                Log.w("FirebaseSource", "Could not extract public_id from URL: $mediaUrl")
-                return
-            }
-
-            // Call backend to delete from Cloudinary
-            val client = okhttp3.OkHttpClient()
-            val jsonBody = org.json.JSONObject().apply {
-                put("public_id", publicId)
-            }.toString()
-
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val requestBody = okhttp3.RequestBody.create(mediaType, jsonBody)
-            val request = okhttp3.Request.Builder()
-                .url("https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-delete")
-                .post(requestBody)
-                .build()
-
-            val response = client.newCall(request).execute()
-            if (response.isSuccessful) {
-                Log.d("FirebaseSource", "Cloudinary media deleted successfully: $publicId")
-            } else {
-                Log.e("FirebaseSource", "Failed to delete from Cloudinary: ${response.code}")
-            }
-        } catch (e: Exception) {
-            Log.e("FirebaseSource", "Exception deleting Cloudinary media: ${e.message}", e)
-        }
-    }
-
-    private fun extractPublicIdFromUrl(url: String): String? {
-        try {
-            // Example: https://res.cloudinary.com/dek45lsyv/image/upload/v1234567890/chat_media_abc123_def456.jpg
-            // Extract: chat_media_abc123_def456
-            val parts = url.split("/upload/")
-            if (parts.size < 2) return null
-
-            val afterUpload = parts[1]
-            // Remove version prefix (v1234567890/)
-            val withoutVersion = afterUpload.substringAfter("/")
-            // Remove file extension
-            val publicId = withoutVersion.substringBeforeLast(".")
-
-            return publicId
-        } catch (e: Exception) {
-            Log.e("FirebaseSource", "Error extracting public_id: ${e.message}")
-            return null
-        }
+    suspend fun deleteMessage(chatId: String, messageId: String) {
+        firestore.collection("chats").document(chatId)
+            .collection("messages")
+            .document(messageId)
+            .delete()
+            .await()
     }
     // 🔹 FirebaseSource.kt
     suspend fun deleteContact(myUid: String, peerUid: String) {
@@ -136,39 +92,6 @@ class FirebaseSource(
             .document(messageId)
             .update(mapOf("text" to newText, "edited" to true))
             .await()
-    }
-    suspend fun deleteMessage(chatId: String, messageId: String) {
-        firestore.collection("chats").document(chatId)
-            .collection("messages")
-            .document(messageId)
-            .delete()
-            .await()
-    }
-
-    // NEW: Delete all messages in chat with Cloudinary media cleanup (Used by Worker)
-    suspend fun deleteChatMessagesWithMedia(chatId: String) {
-        try {
-            // 1. Fetch all messages to get media URLs
-            val messagesSnapshot = firestore.collection("chats").document(chatId)
-                .collection("messages").get().await()
-
-            val mediaUrls = messagesSnapshot.documents
-                .mapNotNull { it.getString("mediaUrl") }
-                .filter { it.contains("cloudinary") }
-
-            // 2. Delete all messages from Firestore (batch delete messages + delete chat doc)
-            deleteChatMessages(chatId) // Note: This function already deletes the chat doc.
-
-            // 3. Delete all media from Cloudinary
-            for (mediaUrl in mediaUrls) {
-                deleteCloudinaryMedia(mediaUrl)
-            }
-
-            Log.d("FirebaseSource", "Deleted ${messagesSnapshot.size()} messages and ${mediaUrls.size} media files from chat: $chatId")
-        } catch (e: Exception) {
-            Log.e("FirebaseSource", "Error deleting chat messages with media: ${e.message}", e)
-            throw e
-        }
     }
     suspend fun deleteChatMessages(chatId: String) {
         // WARNING: this can be expensive; we batch delete messages for this chat for current user.
@@ -212,11 +135,47 @@ class FirebaseSource(
         return result
     }
 
-    // Contacts
+    // Contacts - Updated to create chat metadata immediately
     suspend fun addContact(myUid: String, peerUid: String) {
+        // 1. Add to contacts subcollection (for backward compatibility)
         val ref = firestore.collection("users").document(myUid)
             .collection("contacts").document(peerUid)
         ref.set(mapOf("addedAt" to com.google.firebase.Timestamp.now())).await()
+        
+        // 2. Get user info for both users
+        val peerInfo = getUserInfo(peerUid)
+        val myInfo = getUserInfo(myUid)
+        
+        // 3. Create chat metadata so contact appears in chat list immediately
+        if (peerInfo != null && myInfo != null) {
+            val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
+            
+            // Create chat entry for current user
+            firestore.collection("users").document(myUid)
+                .collection("chats").document(chatId)
+                .set(mapOf(
+                    "peerUid" to peerUid,
+                    "peerName" to (peerInfo["name"] as? String ?: "Unknown"),
+                    "peerProfilePic" to peerInfo["profileImageUrl"],
+                    "lastMessage" to "Say hello! 👋",
+                    "lastTimestamp" to com.google.firebase.Timestamp.now(),
+                    "unreadCount" to 0
+                ), SetOptions.merge())
+                .await()
+            
+            // Create chat entry for peer so they also see the contact
+            firestore.collection("users").document(peerUid)
+                .collection("chats").document(chatId)
+                .set(mapOf(
+                    "peerUid" to myUid,
+                    "peerName" to (myInfo["name"] as? String ?: "Unknown"),
+                    "peerProfilePic" to myInfo["profileImageUrl"],
+                    "lastMessage" to "${myInfo["name"]} added you as a contact",
+                    "lastTimestamp" to com.google.firebase.Timestamp.now(),
+                    "unreadCount" to 0
+                ), SetOptions.merge())
+                .await()
+        }
     }
 
     fun listenContacts(myUid: String, onChange: (Set<String>) -> Unit): ListenerRegistration {
@@ -284,10 +243,10 @@ class FirebaseSource(
                         text = data["text"] as? String ?: "",
                         timestamp = (data["timestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time
                             ?: System.currentTimeMillis(),
-                        edited = (data["edited"] as? Boolean) ?: false, // <-- NEW
-                        mediaUrl = data["mediaUrl"] as? String,         // <-- NEW
-                        isMedia = (data["isMedia"] as? Boolean) ?: false, // <-- NEW
-                        mediaType = data["mediaType"] as? String          // <-- NEW
+                        edited = (data["edited"] as? Boolean) ?: false,
+                        mediaUrl = data["mediaUrl"] as? String,
+                        isMedia = (data["isMedia"] as? Boolean) ?: false,
+                        mediaType = data["mediaType"] as? String
                     )
                     when (change.type) {
                         DocumentChange.Type.ADDED -> onAdded(msg)
@@ -310,23 +269,197 @@ class FirebaseSource(
                 onDoc(snapshot?.data)
             }
     }
-    // NEW: Function to set auto-delete time on the chat document (Used by ViewModel/Repo)
-    suspend fun setChatDeletionTime(chatId: String, durationMillis: Long?) {
-        val ref = firestore.collection("chats").document(chatId)
-        val data = if (durationMillis != null) {
-            mapOf(
-                "autoDeleteAfterMillis" to durationMillis,
-                "autoDeleteStartTime" to FieldValue.serverTimestamp()
-            )
-        } else {
-            mapOf(
-                "autoDeleteAfterMillis" to FieldValue.delete(),
-                "autoDeleteStartTime" to FieldValue.delete()
-            )
-        }
-        ref.set(data, SetOptions.merge()).await()
+
+    // ========== NEW: Sub-Collection Chat List Functions ==========
+
+    /**
+     * Listen to the user's chat list in real-time.
+     * Returns chat metadata sorted by most recent activity.
+     */
+    fun listenUserChats(myUid: String, onChange: (List<Map<String, Any>>) -> Unit): ListenerRegistration {
+        return firestore.collection("users").document(myUid)
+            .collection("chats")
+            .orderBy("lastTimestamp", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, e ->
+                if (e != null || snapshot == null) {
+                    Log.e("FirebaseSource", "Error listening to user chats: ${e?.message}")
+                    onChange(emptyList())
+                    return@addSnapshotListener
+                }
+                val chats = snapshot.documents.mapNotNull { doc ->
+                    doc.data?.plus("chatId" to doc.id)
+                }
+                onChange(chats)
+            }
     }
 
+    /**
+     * Update chat metadata for BOTH users when a message is sent.
+     * Creates the chat document if it doesn't exist.
+     */
+    suspend fun updateChatMetadata(
+        myUid: String,
+        peerUid: String,
+        chatId: String,
+        lastMessage: String,
+        timestamp: com.google.firebase.Timestamp,
+        myName: String,
+        peerName: String,
+        myProfilePic: String? = null,
+        peerProfilePic: String? = null
+    ) {
+        // Update sender's chat list (me)
+        firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId)
+            .set(mapOf(
+                "peerUid" to peerUid,
+                "peerName" to peerName,
+                "peerProfilePic" to peerProfilePic,
+                "lastMessage" to lastMessage,
+                "lastTimestamp" to timestamp
+                // Don't increment unreadCount for sender
+            ), SetOptions.merge()).await()
 
+        // Update receiver's chat list (peer)
+        firestore.collection("users").document(peerUid)
+            .collection("chats").document(chatId)
+            .set(mapOf(
+                "peerUid" to myUid,
+                "peerName" to myName,
+                "peerProfilePic" to myProfilePic,
+                "lastMessage" to lastMessage,
+                "lastTimestamp" to timestamp,
+                "unreadCount" to FieldValue.increment(1) // Increment for receiver
+            ), SetOptions.merge()).await()
+    }
 
+    /**
+     * Mark a chat as read by resetting unread count to 0.
+     */
+    suspend fun markChatAsRead(myUid: String, chatId: String) {
+        firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId)
+            .update("unreadCount", 0)
+            .await()
+    }
+
+    /**
+     * Get user info for a specific peer (used when creating chat metadata).
+     */
+    suspend fun getUserInfo(uid: String): Map<String, Any>? {
+        return try {
+            val doc = firestore.collection("users").document(uid).get().await()
+            doc.data
+        } catch (e: Exception) {
+            Log.e("FirebaseSource", "Error getting user info: ${e.message}")
+            null
+        }
+    }
+    // ========== NEW: Status Functions ==========
+
+    /**
+     * Upload a new status to the user's status sub-collection.
+     */
+    suspend fun addStatus(myUid: String, status: Status) {
+        val ref = firestore.collection("users").document(myUid)
+            .collection("status").document() // Auto-generate ID
+        
+        val statusWithId = status.copy(statusId = ref.id, userId = myUid)
+        ref.set(statusWithId).await()
+    }
+
+    /**
+     * Listen to statuses for a list of UIDs (contacts).
+     * This returns a map of UserId -> List of their active Statuses.
+     */
+    fun listenStatuses(uids: List<String>, onUpdate: (Map<String, List<Status>>) -> Unit): List<ListenerRegistration> {
+        val registrations = mutableListOf<ListenerRegistration>()
+        val allStatuses = mutableMapOf<String, List<Status>>()
+        val now = System.currentTimeMillis()
+
+        uids.forEach { uid ->
+            val reg = firestore.collection("users").document(uid)
+                .collection("status")
+                .whereGreaterThan("expiresAt", now)
+                .addSnapshotListener { snapshot, e ->
+                    if (e != null || snapshot == null) return@addSnapshotListener
+                    
+                    val statuses = snapshot.documents.mapNotNull { doc ->
+                        doc.toObject(Status::class.java)
+                    }.sortedByDescending { it.timestamp }
+                    
+                    allStatuses[uid] = statuses
+                    onUpdate(allStatuses.toMap())
+                }
+            registrations.add(reg)
+        }
+        return registrations
+    }
+
+    /**
+     * Delete a status from Firestore.
+     */
+    suspend fun deleteStatus(userId: String, statusId: String) {
+        firestore.collection("users")
+            .document(userId)
+            .collection("status")
+            .document(statusId)
+            .delete()
+            .await()
+    }
+
+    /**
+     * Delete status media from Cloudinary via backend /cloudinary-delete endpoint.
+     * Extracts public_id from the CDN URL and sends it to the server.
+     *
+     * @param mediaUrl   The full Cloudinary URL (e.g. https://res.cloudinary.com/.../status_uid_123.jpg)
+     * @param resourceType  "image" or "video" — passed to Cloudinary's destroy API
+     */
+    suspend fun deleteStatusMedia(mediaUrl: String, resourceType: String = "image") {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                // Extract public_id from Cloudinary URL
+                // URL format: https://res.cloudinary.com/{cloud}/image/upload/v1234/status_uid_ts.jpg
+                val publicId = mediaUrl
+                    .substringAfterLast("/")    // "status_uid_ts.jpg"
+                    .substringBeforeLast(".")   // "status_uid_ts"
+
+                val json = org.json.JSONObject().apply {
+                    put("public_id", publicId)
+                    put("resource_type", resourceType)
+                }.toString()
+
+                val mediaType = "application/json; charset=utf-8"
+                    .toMediaType()
+                val body = okhttp3.RequestBody.create(mediaType, json)
+
+                val request = okhttp3.Request.Builder()
+                    .url("https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-delete")
+                    .post(body)
+                    .build()
+
+                val response = okhttp3.OkHttpClient().newCall(request).execute()
+                if (response.isSuccessful) {
+                    Log.d("FirebaseSource", "Cloudinary media deleted: $publicId")
+                } else {
+                    Log.e("FirebaseSource", "Cloudinary delete failed (${response.code}): ${response.body?.string()}")
+                }
+            } catch (e: Exception) {
+                Log.e("FirebaseSource", "Error deleting Cloudinary media: ${e.message}", e)
+                // Non-critical — status doc is already deleted from Firestore
+            }
+        }
+    }
+
+    /**
+     * Update status fields (e.g., caption, backgroundColor for text statuses).
+     */
+    suspend fun updateStatus(userId: String, statusId: String, updates: Map<String, Any?>) {
+        firestore.collection("users")
+            .document(userId)
+            .collection("status")
+            .document(statusId)
+            .update(updates)
+            .await()
+    }
 }

@@ -52,6 +52,7 @@ dependencies {
     // Hilt
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
     implementation(libs.hilt.android)
+    implementation(libs.androidx.compose.runtime)
     kapt(libs.hilt.compiler)
 
     // Room
@@ -63,11 +64,10 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.6.0")
 
     // Material 3 (New theme/components)
-    implementation(libs.androidx.material3) // Redundant line removed
-    implementation("androidx.compose.material3:material3:1.2.0")
+    implementation(libs.androidx.material3)
 
     // Material 2 (REQUIRED for SwipeToDismiss)
-    implementation("androidx.compose.material:material:1.6.8")
+    implementation("androidx.compose.material:material")
     implementation("androidx.compose.material:material-icons-extended")
 
     // Coroutines

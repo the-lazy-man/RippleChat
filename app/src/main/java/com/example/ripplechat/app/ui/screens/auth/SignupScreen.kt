@@ -112,8 +112,6 @@ fun SignupScreen(
                 { Text(it, color = MaterialTheme.colorScheme.error) }
             },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                 focusedLabelColor = MaterialTheme.colorScheme.primary,
                 unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -134,8 +132,6 @@ fun SignupScreen(
                 { Text(it, color = MaterialTheme.colorScheme.error) }
             },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                 focusedLabelColor = MaterialTheme.colorScheme.primary,
                 unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -162,8 +158,6 @@ fun SignupScreen(
                 PasswordVisualTransformation()
             },
             colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
                 focusedLabelColor = MaterialTheme.colorScheme.primary,
                 unfocusedLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 focusedBorderColor = MaterialTheme.colorScheme.primary,

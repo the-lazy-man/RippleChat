@@ -3,26 +3,26 @@ package com.example.ripplechat.data.repository
 import com.example.ripplechat.app.data.local.MessageDao
 import com.example.ripplechat.app.data.local.MessageEntity
 import com.example.ripplechat.app.data.model.ChatMessage
+import com.example.ripplechat.app.data.model.Status
 import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+// Add these imports to ChatRepository.kt
+import com.example.ripplechat.app.data.model.FcmRequest // Assuming FcmRequest is in this path based on Network.kt
+import com.example.ripplechat.app.data.model.NotificationService // Assuming NotificationService is in this path based on Network.kt
+import android.util.Log // For logging network response
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.Timestamp
-import com.example.ripplechat.app.data.model.FcmRequest
-import com.example.ripplechat.app.data.model.NotificationService
-import android.util.Log
-import com.google.firebase.firestore.FieldValue // Added
-import com.google.firebase.firestore.FirebaseFirestore // Added (already there but ensuring clarity)
-import kotlinx.coroutines.tasks.await // Added (already there but ensuring clarity)
+import kotlinx.coroutines.tasks.await
 
 class ChatRepository @Inject constructor(
     private val firebase: FirebaseSource,
     private val dao: MessageDao,
     private val notificationService: NotificationService
 ) {
-    // --- 1. Message Mappings (UPDATED for Media and Edited fields) ---
     fun getLocalMessagesFlow(chatId: String): Flow<List<ChatMessage>> =
         dao.getMessagesFlow(chatId).map { list ->
             list.map {
@@ -32,10 +32,10 @@ class ChatRepository @Inject constructor(
                     senderId = it.senderId,
                     text = it.text,
                     timestamp = it.timestamp,
-                    edited = it.edited,       // <-- NEW
-                    mediaUrl = it.mediaUrl,   // <-- NEW
-                    isMedia = it.isMedia,     // <-- NEW
-                    mediaType = it.mediaType  // <-- NEW
+                    edited = it.edited,
+                    mediaUrl = it.mediaUrl,
+                    isMedia = it.isMedia,
+                    mediaType = it.mediaType
                 )
             }
         }
@@ -52,86 +52,105 @@ class ChatRepository @Inject constructor(
                 senderId = msg.senderId,
                 text = msg.text,
                 timestamp = msg.timestamp,
-                edited = msg.edited,       // <-- NEW
-                mediaUrl = msg.mediaUrl,   // <-- NEW
-                isMedia = msg.isMedia,     // <-- NEW
-                mediaType = msg.mediaType  // <-- NEW
+                edited = msg.edited,
+                mediaUrl = msg.mediaUrl,
+                isMedia = msg.isMedia,
+                mediaType = msg.mediaType
             )
         )
     }
 
     suspend fun getSenderName(uid: String): String = withContext(Dispatchers.IO) {
+        // Assuming 'firebase' in the repository has access to Firestore
         val doc = FirebaseFirestore.getInstance().collection("users").document(uid).get().await()
         return@withContext doc.getString("name") ?: "RippleChat User"
     }
-
     suspend fun deleteLocal(messageId: String) = withContext(Dispatchers.IO) {
         dao.deleteMessage(messageId)
     }
 
-    // --- 2. NEW: Self-Delete Chat Logic ---
 
-    // NEW: Function to set auto-delete time on the chat document (Called by ViewModel)
-    suspend fun setChatDeletionTime(chatId: String, durationMillis: Long?) {
-        firebase.setChatDeletionTime(chatId, durationMillis)
-    }
-
-    // NEW: Full chat deletion logic (Called by Worker)
-    suspend fun deleteChatMessagesWithMedia(chatId: String) {
-        // This calls the full cleanup function in FirebaseSource (Firestore + Cloudinary)
-        firebase.deleteChatMessagesWithMedia(chatId)
-        // Clear Room DB (local messages)
-        dao.clearChat(chatId)
-    }
-
-    // 3. UPDATED: Sends a text message.
-    suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String) {
+    // FIX: Correctly formats payload for the fixed FirebaseSource.sendMessage
+    suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String, receiverId: String) {
         val payload = mapOf(
             "text" to text,
             "senderId" to senderId,
             "timestamp" to Timestamp.now()
         )
-        // FirebaseSource updates the chat document's lastMessage/lastTimestamp
         firebase.sendMessage(chatId, messageId, payload)
+        
+        // NEW: Update chat metadata for both users
+        val senderInfo = firebase.getUserInfo(senderId)
+        val receiverInfo = firebase.getUserInfo(receiverId)
+        
+        if (senderInfo != null && receiverInfo != null) {
+            firebase.updateChatMetadata(
+                myUid = senderId,
+                peerUid = receiverId,
+                chatId = chatId,
+                lastMessage = text,
+                timestamp = Timestamp.now(),
+                myName = senderInfo.get("name") as? String ?: "",
+                peerName = receiverInfo.get("name") as? String ?: "",
+                myProfilePic = senderInfo.get("profileImageUrl") as? String,
+                peerProfilePic = receiverInfo.get("profileImageUrl") as? String
+            )
+        }
     }
 
-    // NEW: Sends a media message.
+    // NEW: Sends a media message (used by ChatViewModel for image/video uploads)
     suspend fun sendMediaMessage(
         chatId: String,
         messageId: String,
         mediaUrl: String,
         text: String,
         senderId: String,
+        receiverId: String,
         mediaType: String
     ) {
-        // We create the payload with all required fields
         val payload = mapOf<String, Any>(
             "senderId" to senderId,
             "text" to text,
             "mediaUrl" to mediaUrl,
             "isMedia" to true,
             "mediaType" to mediaType,
-            "timestamp" to FieldValue.serverTimestamp() // Use server timestamp for accuracy
+            "timestamp" to com.google.firebase.firestore.FieldValue.serverTimestamp()
         )
-        // FirebaseSource handles message creation AND chat doc update
         firebase.sendMessage(chatId, messageId, payload)
+        
+        // Update chat metadata
+        val senderInfo = firebase.getUserInfo(senderId)
+        val receiverInfo = firebase.getUserInfo(receiverId)
+        
+        if (senderInfo != null && receiverInfo != null) {
+            firebase.updateChatMetadata(
+                myUid = senderId,
+                peerUid = receiverId,
+                chatId = chatId,
+                lastMessage = if (text.isNotBlank()) text else "📷 Photo",
+                timestamp = com.google.firebase.Timestamp.now(),
+                myName = senderInfo.get("name") as? String ?: "",
+                peerName = receiverInfo.get("name") as? String ?: "",
+                myProfilePic = senderInfo.get("profileImageUrl") as? String,
+                peerProfilePic = receiverInfo.get("profileImageUrl") as? String
+            )
+        }
     }
-
 
     suspend fun editMessage(chatId: String, messageId: String, newText: String) {
         firebase.editMessage(chatId, messageId, newText)
     }
 
-    // FIX: Calls the corrected Firebase function AND deletes locally (since listener won't remove it)
+    // FIX: Calls the corrected Firebase function
     suspend fun deleteMessage(chatId: String, messageId: String) {
         firebase.deleteMessage(chatId, messageId)
-        deleteLocal(messageId) // Add local delete here as this is an explicit user action
     }
 
     // Unnecessary `deleteChatForUser` kept minimal as per request
     suspend fun deleteChatForUser(chatId: String) {
         dao.clearChat(chatId)
-        // ... (rest of the logic)
+        // Optionally delete remote messages if desired, but typically only deletes for the viewing user.
+        // firebase.deleteChatMessages(chatId)
     }
 
     fun listenMessagesRealtime(
@@ -141,7 +160,9 @@ class ChatRepository @Inject constructor(
         onRemoved: (String) -> Unit
     ) = firebase.listenMessages(chatId, onAdded, onModified, onRemoved)
 
-    /* Triggers the external server to send an FCM notification to the peer. */
+    /* Triggers the external server to send an FCM notification to the peer.
+    * This is only called when the peer is determined to be offline.
+    */
     suspend fun triggerFcmNotification(
         recipientId: String,
         senderId: String,
@@ -168,4 +189,20 @@ class ChatRepository @Inject constructor(
     fun listenChatDoc(chatId: String, onDoc: (Map<String, Any>?) -> Unit) = firebase.listenChatDoc(chatId, onDoc)
     fun setPresence(uid: String, online: Boolean) = firebase.setPresence(uid, online)
     fun listenPresence(peerUid: String, onChange: (Boolean, Long?) -> Unit) = firebase.listenPresence(peerUid, onChange)
+    
+    // NEW: Chat list functions
+    fun listenUserChats(myUid: String, onChange: (List<Map<String, Any>>) -> Unit) = firebase.listenUserChats(myUid, onChange)
+    
+    suspend fun markChatAsRead(myUid: String, chatId: String) {
+        firebase.markChatAsRead(myUid, chatId)
+    }
+
+    // ========== NEW: Status repository methods ==========
+
+    suspend fun addStatus(myUid: String, status: Status) = withContext(Dispatchers.IO) {
+        firebase.addStatus(myUid, status)
+    }
+
+    fun listenStatuses(uids: List<String>, onUpdate: (Map<String, List<Status>>) -> Unit) =
+        firebase.listenStatuses(uids, onUpdate)
 }

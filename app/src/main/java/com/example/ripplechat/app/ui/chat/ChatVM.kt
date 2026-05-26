@@ -1,35 +1,25 @@
 package com.example.ripplechat.app.ui.chat
 
 import android.content.ContentResolver
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.Constraints // ADDED
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.cloudinary.android.MediaManager
 import com.cloudinary.android.callback.ErrorInfo
 import com.cloudinary.android.callback.UploadCallback
-import com.example.ripplechat.app.data.local.DeleteChatMessagesWorker
 import com.example.ripplechat.app.data.model.ChatMessage
 import com.example.ripplechat.data.repository.ChatRepository
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -38,19 +28,14 @@ import okhttp3.Request
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
-// NOTE: WorkManager and Context must be injected in the constructor
 @HiltViewModel
 class ChatViewModel @Inject constructor(
-    private val repo: ChatRepository,
-    private val workManager: WorkManager,
-    @ApplicationContext private val applicationContext: Context
+    private val repo: ChatRepository
 ) : ViewModel() {
     private var messagesListener: ListenerRegistration? = null
     private var chatDocListener: ListenerRegistration? = null
-    private var presenceListener: ListenerRegistration? = null
 
     val currentUserId: String? = FirebaseAuth.getInstance().currentUser?.uid
 
@@ -64,99 +49,28 @@ class ChatViewModel @Inject constructor(
     private var currentChatId: String? = null
     private var peerUid: String? = null
 
+    private var presenceListener: ListenerRegistration? = null
     private val _peerOnline = MutableStateFlow(false)
     val peerOnline = _peerOnline.asStateFlow()
     private val _peerLastSeen = MutableStateFlow<Long?>(null)
     val peerLastSeen = _peerLastSeen.asStateFlow()
 
+    // FIX: State for Delete Loader
     private val _isDeletingMessage = MutableStateFlow(false)
     val isDeletingMessage = _isDeletingMessage.asStateFlow()
 
+    // Media upload state
     private val _isUploadingMedia = MutableStateFlow(false)
     val isUploadingMedia = _isUploadingMedia.asStateFlow()
 
     private val _uploadError = MutableStateFlow<String?>(null)
     val uploadError = _uploadError.asStateFlow()
 
+    // 💡 NEW: Variable to hold the current user's name fetched from the database
     private var currentUserName: String = "RippleChat User"
-
-    // Auto-deletion state
-    private val _deletionTimeMillis = MutableStateFlow<Long?>(null)
-    val deletionTimeMillis = _deletionTimeMillis.asStateFlow()
-
-    private val _timeRemaining = MutableStateFlow<String?>(null)
-    val timeRemaining = _timeRemaining.asStateFlow()
-
-    private var deletionTargetTime: Long? = null
-    private var timerJob: Job? = null
 
     private val client = OkHttpClient()
     private val SIGNATURE_URL = "https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-auth"
-
-    // --- DELETION LOGIC FIXES ---
-    fun setDeletionTime(durationMillis: Long?) {
-        val chatId = currentChatId ?: return
-
-        viewModelScope.launch {
-            repo.setChatDeletionTime(chatId, durationMillis)
-
-            workManager.cancelUniqueWork("DELETE_CHAT_$chatId")
-
-            if (durationMillis != null && durationMillis > 0) {
-                // Constraints to ensure network is available for Firestore/Cloudinary cleanup
-                val constraints = Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-
-                val deleteRequest = OneTimeWorkRequestBuilder<DeleteChatMessagesWorker>()
-                    .setInputData(workDataOf(DeleteChatMessagesWorker.KEY_CHAT_ID to chatId))
-                    .setInitialDelay(durationMillis, TimeUnit.MILLISECONDS)
-                    .setConstraints(constraints) // Set the constraints
-                    .build()
-
-                workManager.enqueueUniqueWork(
-                    "DELETE_CHAT_$chatId",
-                    ExistingWorkPolicy.REPLACE,
-                    deleteRequest
-                )
-                Log.d("ChatVM", "Scheduled chat deletion for $chatId in ${durationMillis}ms")
-            }
-        }
-    }
-
-    private fun cancelTimer() {
-        deletionTargetTime = null
-        timerJob?.cancel()
-        _timeRemaining.value = null
-    }
-
-    private fun startCountdown(targetTimeMillis: Long) {
-        timerJob?.cancel()
-
-        timerJob = viewModelScope.launch {
-            while (isActive) {
-                val remaining = targetTimeMillis - System.currentTimeMillis()
-                if (remaining <= 0) {
-                    _timeRemaining.value = "Deleting..."
-                    break
-                }
-
-                val hours = TimeUnit.MILLISECONDS.toHours(remaining)
-                val minutes = TimeUnit.MILLISECONDS.toMinutes(remaining) % 60
-                val seconds = TimeUnit.MILLISECONDS.toSeconds(remaining) % 60
-
-                _timeRemaining.value = if (hours > 0) {
-                    String.format("%02d:%02d:%02d", hours, minutes, seconds)
-                } else {
-                    String.format("%02d:%02d", minutes, seconds)
-                }
-
-                delay(1000L)
-            }
-        }
-    }
-    // --- END DELETION LOGIC FIXES ---
-
 
     fun clearUploadError() { _uploadError.value = null }
 
@@ -180,9 +94,19 @@ class ChatViewModel @Inject constructor(
         this.currentChatId = chatId
         this.peerUid = peerUid
 
-        viewModelScope.launch { repo.getLocalMessagesFlow(chatId).collect { _messages.value = it } }
-        currentUserId?.let { uid -> viewModelScope.launch { currentUserName = repo.getSenderName(uid) } }
+        // Observe local Room messages
+        viewModelScope.launch {
+            repo.getLocalMessagesFlow(chatId).collect { list ->
+                _messages.value = list
+            }
+        }
 
+        currentUserId?.let { uid ->
+            viewModelScope.launch {
+                currentUserName = repo.getSenderName(uid)
+            }
+        }
+        // Realtime Firestore Listener
         messagesListener = repo.listenMessagesRealtime(
             chatId,
             onAdded = { msg -> viewModelScope.launch { repo.insertOrUpdate(msg) } },
@@ -190,56 +114,45 @@ class ChatViewModel @Inject constructor(
             onRemoved = { msgId -> viewModelScope.launch { repo.deleteLocal(msgId) } }
         )
 
+        // Typing indicator and Presence
         chatDocListener = repo.listenChatDoc(chatId) { doc ->
             val typingMap = doc?.get("typing") as? Map<String, Any>
             _otherTyping.value = (typingMap?.get(peerUid) as? Boolean) ?: false
-
-            val deleteDuration = doc?.get("autoDeleteAfterMillis") as? Long
-            val startTimeTs = doc?.get("autoDeleteStartTime") as? com.google.firebase.Timestamp
-            val lastMsgTimestamp = doc?.get("lastTimestamp") as? com.google.firebase.Timestamp
-
-            _deletionTimeMillis.value = deleteDuration
-
-            cancelTimer()
-
-            if (deleteDuration != null && deleteDuration > 0) {
-                // Use the new explicit start time if available, otherwise fallback to last message (legacy behavior)
-                // If both are missing, we can't reliably calculate, but defaulting to 'now' might be less confusing than immediate deletion.
-                // However, for correct logic:
-                val startMillis = startTimeTs?.toDate()?.time 
-                    ?: lastMsgTimestamp?.toDate()?.time 
-                    ?: System.currentTimeMillis()
-
-                val target = startMillis + deleteDuration
-                deletionTargetTime = target
-
-                startCountdown(target)
-            }
         }
-
+       // ✅ PEER PRESENCE LISTENER IS KEPT HERE
         presenceListener = repo.listenPresence(peerUid) { online, lastSeen ->
             _peerOnline.value = online
             _peerLastSeen.value = lastSeen
         }
     }
 
+    fun closeChat() {
+        removeListeners()
+    }
 
-    fun closeChat() { removeListeners() }
-
+    // Media upload functionality - Cloudinary integration
     fun uploadMediaFile(resolver: ContentResolver, sourceUri: Uri, caption: String = "") {
         val uid = currentUserId ?: return
         val chatId = currentChatId ?: return
+        val receiver = peerUid ?: return
 
         _isUploadingMedia.value = true
         val fileId = repo.generateMessageId()
         val publicId = "chat_media_${chatId}_$fileId"
-        val mediaTypeString = "image"
+        val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(sourceUri.toString()) ?: ""
+        val mimeType = resolver.getType(sourceUri) ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: ""
+        val mediaTypeString = when {
+            mimeType.startsWith("video/") -> "video"
+            mimeType.startsWith("image/") -> "image"
+            mimeType.startsWith("audio/") || sourceUri.toString().endsWith(".m4a") -> "audio"
+            else -> "raw"
+        }
 
         val tempLocalMsg = ChatMessage(
             messageId = fileId,
             chatId = chatId,
             senderId = uid,
-            text = if (caption.isNotBlank()) caption else "Uploading Image...",
+            text = if (caption.isNotBlank()) caption else "Uploading File...",
             mediaUrl = sourceUri.toString(),
             isMedia = true,
             mediaType = mediaTypeString,
@@ -248,7 +161,7 @@ class ChatViewModel @Inject constructor(
 
         viewModelScope.launch {
             try {
-                // 1. Get Signature
+                // 1. Get Signature from server
                 val signatureResponse = withContext(Dispatchers.IO) {
                     try {
                         val jsonBody = JSONObject().apply { put("public_id", publicId) }.toString()
@@ -270,21 +183,20 @@ class ChatViewModel @Inject constructor(
                 val timestamp = jsonObject.getLong("timestamp")
                 val uploadPreset = jsonObject.getString("upload_preset")
 
-                // 2. Load, resize, and compress bitmap
-                val bmp = withContext(Dispatchers.IO) { loadBitmap(resolver, sourceUri) }
-                val maxDim = 1024
-                val scaled = withContext(Dispatchers.Default) { resizeBitmap(bmp, maxDim, maxDim) }
-                val uploadBytes = withContext(Dispatchers.Default) {
-                    ByteArrayOutputStream().use { stream ->
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)
-                        stream.toByteArray()
-                    }
+                // 2. Read raw bytes directly to support GIFs, Videos, and Docs without compression corruption
+                val uploadBytes = withContext(Dispatchers.IO) {
+                    resolver.openInputStream(sourceUri)?.readBytes() ?: ByteArray(0)
                 }
 
                 // 3. Upload to Cloudinary
                 withContext(Dispatchers.IO) {
+                    val resourceTypeOption = when (mediaTypeString) {
+                        "raw" -> "raw"
+                        "audio" -> "video" // Cloudinary treats audio as video
+                        else -> mediaTypeString
+                    }
                     MediaManager.get().upload(uploadBytes)
-                        .option("resource_type", mediaTypeString)
+                        .option("resource_type", resourceTypeOption)
                         .option("public_id", publicId)
                         .option("signature", signature)
                         .option("timestamp", timestamp)
@@ -296,7 +208,7 @@ class ChatViewModel @Inject constructor(
                             override fun onSuccess(requestId: String?, resultData: MutableMap<Any?, Any?>?) {
                                 val url = resultData?.get("secure_url") as? String
                                 if (url != null) {
-                                    sendMediaMessage(fileId, url, caption, mediaTypeString)
+                                    sendMediaMessage(fileId, url, caption, mediaTypeString, receiver)
                                 } else {
                                     Log.e("ChatViewModel", "Upload succeeded but no URL returned.")
                                     viewModelScope.launch {
@@ -335,23 +247,43 @@ class ChatViewModel @Inject constructor(
         }
     }
 
-    private fun sendMediaMessage(messageId: String, url: String, text: String, mediaType: String) {
+    private fun sendMediaMessage(messageId: String, url: String, text: String, mediaType: String, receiver: String) {
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return
 
         val finalMsg = ChatMessage(
-            messageId = messageId, chatId = chatId, senderId = sender, text = text, mediaUrl = url, isMedia = true, mediaType = mediaType, timestamp = System.currentTimeMillis()
+            messageId = messageId,
+            chatId = chatId,
+            senderId = sender,
+            text = text,
+            mediaUrl = url,
+            isMedia = true,
+            mediaType = mediaType,
+            timestamp = System.currentTimeMillis()
         )
 
         viewModelScope.launch {
             repo.insertOrUpdate(finalMsg)
             try {
-                repo.sendMediaMessage(chatId, messageId, url, text, sender, mediaType)
+                repo.sendMediaMessage(chatId, messageId, url, text, sender, receiver, mediaType)
 
-                // FCM logic (Simplified for this context)
-                if (peerUid?.let { repo.listenPresence(it) { _, _ ->  }.toString().isNotBlank() } == true) { }
+                // FCM notification if peer is offline
+                val isPeerOnline = peerOnline.value
+                if (!isPeerOnline) {
+                    repo.triggerFcmNotification(
+                        recipientId = receiver,
+                        senderId = sender,
+                        messageText = if (text.isNotBlank()) text else "\ud83d\udcf7 Photo",
+                        senderName = currentUserName,
+                        chatId = chatId
+                    )
+                }
 
-            } catch (t: Throwable) { Log.e("ChatViewModel", "sendMediaMessage failed", t) } finally { _isUploadingMedia.value = false }
+            } catch (t: Throwable) {
+                Log.e("ChatViewModel", "sendMediaMessage failed", t)
+            } finally {
+                _isUploadingMedia.value = false
+            }
         }
     }
 
@@ -364,13 +296,14 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // FIX: Implemented Delete Loader
     fun deleteExistingMessage(messageId: String) {
         val chatId = currentChatId ?: return
         _isDeletingMessage.value = true
         viewModelScope.launch {
             try {
                 repo.deleteMessage(chatId, messageId)
-                delay(500)
+                delay(500) // Small delay for UX feedback
             } catch (t: Throwable) {
                 Log.e("ChatViewModel", "Error deleting message: $messageId", t)
             } finally {
@@ -382,21 +315,42 @@ class ChatViewModel @Inject constructor(
     fun sendMessage(text: String) {
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return
+        val receiver = peerUid ?: return
 
         val messageId = repo.generateMessageId()
 
-        val localMsg = ChatMessage(messageId = messageId, chatId = chatId, senderId = sender, text = text, timestamp = System.currentTimeMillis())
+        val localMsg = ChatMessage(
+            messageId = messageId,
+            chatId = chatId,
+            senderId = sender,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
 
         viewModelScope.launch {
             repo.insertOrUpdate(localMsg)
             try {
-                repo.sendMessage(chatId, messageId, text, sender)
-                // FCM logic (Simplified for this context)
-                if (peerUid?.let { repo.listenPresence(it) { _, _ ->  }.toString().isNotBlank() } == true) { }
-            } catch (t: Throwable) { Log.e("ChatViewModel", "sendMessage failed", t) }
+                repo.sendMessage(chatId, messageId, text, sender, receiver)
+
+                // Conditional FCM Notification
+          val isPeerOnline = peerOnline.value
+                if (!isPeerOnline) {
+                    repo.triggerFcmNotification(
+                        recipientId = receiver,
+                        senderId = sender,
+                        messageText = text,
+                        senderName = currentUserName,
+                        chatId = chatId
+                    )
+                }
+                Log.d("CurrentUser","$currentUserName")
+
+            } catch (t: Throwable) {
+                Log.e("ChatViewModel", "sendMessage failed", t)
+            }
         }
     }
-
+    
     fun updateTyping(isTyping: Boolean) {
         val chatId = currentChatId ?: return
         val uid = currentUserId ?: return
@@ -419,7 +373,6 @@ class ChatViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        timerJob?.cancel()
         removeListeners()
     }
 }

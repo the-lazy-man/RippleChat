@@ -17,7 +17,13 @@ private val LightColors = lightColorScheme(
     onPrimary = md_theme_light_onPrimary,
     background = md_theme_light_background,
     surface = md_theme_light_surface,
-    onSurface = md_theme_light_onSurface
+    onSurface = md_theme_light_onSurface,
+    surfaceVariant = md_theme_light_surfaceVariant,
+    onSurfaceVariant = md_theme_light_onSurfaceVariant,
+    outline = md_theme_light_outline,
+    outlineVariant = md_theme_light_outlineVariant,
+    error = md_theme_light_error,
+    onError = md_theme_light_onError
 )
 
 private val DarkColors = darkColorScheme(
@@ -25,7 +31,13 @@ private val DarkColors = darkColorScheme(
     onPrimary = md_theme_dark_onPrimary,
     background = md_theme_dark_background,
     surface = md_theme_dark_surface,
-    onSurface = md_theme_dark_onSurface
+    onSurface = md_theme_dark_onSurface,
+    surfaceVariant = md_theme_dark_surfaceVariant,
+    onSurfaceVariant = md_theme_dark_onSurfaceVariant,
+    outline = md_theme_dark_outline,
+    outlineVariant = md_theme_dark_outlineVariant,
+    error = md_theme_dark_error,
+    onError = md_theme_dark_onError
 )
 
 @Composable
