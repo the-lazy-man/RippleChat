@@ -10,6 +10,8 @@ import com.example.ripplechat.app.data.model.ui.theme.screens.splash.SplashScree
 import com.example.ripplechat.app.ui.chat.ChatScreen
 import com.example.ripplechat.app.ui.dashboard.DashboardScreen
 import com.example.ripplechat.app.ui.profile.ProfileScreen
+import com.example.ripplechat.app.ui.status.MyStatusViewerScreen
+import com.example.ripplechat.app.ui.status.OthersStatusViewerScreen
 
 @Composable
 fun NavGraph(navController: NavHostController) {
@@ -31,6 +33,20 @@ fun NavGraph(navController: NavHostController) {
                 chatId = chatId,
                 peerUid = peerUid,
                 peerName = peerName
+            )
+        }
+        
+        // My Status Viewer
+        composable("my_status_viewer") {
+            MyStatusViewerScreen(navController = navController)
+        }
+        
+        // Others' Status Viewer
+        composable("status_viewer/{userId}") { backStackEntry ->
+            val userId = backStackEntry.arguments?.getString("userId") ?: ""
+            OthersStatusViewerScreen(
+                navController = navController,
+                userId = userId
             )
         }
     }

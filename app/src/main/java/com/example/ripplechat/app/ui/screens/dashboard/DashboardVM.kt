@@ -5,8 +5,10 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ripplechat.app.data.local.NotificationPreferences
+import com.example.ripplechat.app.data.model.ChatListItem
 import com.example.ripplechat.app.data.model.User
 import com.example.ripplechat.app.data.model.firebase.FirebaseSource
+import com.example.ripplechat.data.repository.ChatRepository
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +20,7 @@ import javax.inject.Inject
 @HiltViewModel
 class DashBoardVM @Inject constructor(
     private val firebase: FirebaseSource,
+    private val chatRepository: ChatRepository,
     private val notificationPreferences: NotificationPreferences
 
 ) : ViewModel() {
@@ -34,17 +37,15 @@ class DashBoardVM @Inject constructor(
         }
     }
 
-    private val _contacts = MutableStateFlow<Set<String>>(emptySet())
-    val contacts = _contacts.asStateFlow()
-
-    private val _users = MutableStateFlow<List<User>>(emptyList())
-    val users = _users.asStateFlow()
+    // NEW: Chat list with metadata instead of contacts
+    private val _chatList = MutableStateFlow<List<ChatListItem>>(emptyList())
+    val chatList = _chatList.asStateFlow()
 
     private val _searchResults = MutableStateFlow<List<User>>(emptyList())
     val searchResults = _searchResults.asStateFlow()
 
     var showToast  = MutableStateFlow<Boolean>(false)
-    private var contactsReg: ListenerRegistration? = null
+    private var chatsReg: ListenerRegistration? = null
 
     // State for all users fetched when search is activated
     private val _allUsersForSearch = MutableStateFlow<List<User>>(emptyList())
@@ -119,22 +120,22 @@ class DashBoardVM @Inject constructor(
     }
 
     /**
-     * Initializes the ViewModel by setting up the real-time listener for contacts.
+     * Initializes the ViewModel by setting up the real-time listener for chat list.
      */
     init {
         val uid = firebase.currentUserUid() ?: ""
-        contactsReg = firebase.listenContacts(uid) { ids ->
-            _contacts.value = ids
-            viewModelScope.launch {
-                val pairs = firebase.getUsersByIds(ids)
-                _users.value = pairs.map { (id, data) ->
-                    User(
-                        uid = id,
-                        name = data["name"] as? String ?: "",
-                        email = data["email"] as? String ?: "",
-                        profileImageUrl = data["profileImageUrl"] as? String
-                    )
-                }.sortedBy { it.name.lowercase() }
+        chatsReg = chatRepository.listenUserChats(uid) { chatDocs ->
+            _chatList.value = chatDocs.map { data ->
+                ChatListItem(
+                    chatId = data["chatId"] as? String ?: "",
+                    peerUid = data["peerUid"] as? String ?: "",
+                    peerName = data["peerName"] as? String ?: "Unknown",
+                    peerProfilePic = data["peerProfilePic"] as? String,
+                    lastMessage = data["lastMessage"] as? String ?: "",
+                    lastTimestamp = (data["lastTimestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0,
+                    unreadCount = (data["unreadCount"] as? Long)?.toInt() ?: 0,
+                    isMuted = false // TODO: Add muted tracking later
+                )
             }
         }
     }
@@ -154,8 +155,18 @@ class DashBoardVM @Inject constructor(
         viewModelScope.launch { firebase.addContact(uid, peerUid) }
     }
 
+    /**
+     * Mark a chat as read when user opens it.
+     */
+    fun markChatAsRead(chatId: String) {
+        val uid = firebase.currentUserUid() ?: return
+        viewModelScope.launch {
+            chatRepository.markChatAsRead(uid, chatId)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
-        contactsReg?.remove()
+        chatsReg?.remove()
     }
 }

@@ -12,13 +12,26 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
+import androidx.core.content.ContextCompat
+import java.io.File
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.*
@@ -28,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -72,14 +86,20 @@ fun ChatScreen(
     // --- MEDIA PREVIEW STATE ---
     var showMediaPreview by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
+    
+    // --- AUDIO RECORDING STATE ---
+    var isRecording by remember { mutableStateOf(false) }
+    var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var audioOutputFile by remember { mutableStateOf<File?>(null) }
+    val recordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+        if (!isGranted) {
+            Toast.makeText(ctx, "Microphone permission required", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // --- FULL SCREEN VIEWER STATE ---
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
-
-    // --- AUTO-DELETE MENU STATE ---
-    var showDeleteMenu by remember { mutableStateOf(false) }
-    val deletionTime by viewModel.deletionTimeMillis.collectAsState()
-    val timeRemaining by viewModel.timeRemaining.collectAsState() // From ViewModel
+    var fullScreenVideoUrl by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(chatId) { viewModel.init(chatId, peerUid) }
     DisposableEffect(Unit) { onDispose { viewModel.removeListeners(); viewModel.closeChat() } }
@@ -150,102 +170,22 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    // NEW: Countdown Text and Auto-Delete Menu
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        timeRemaining?.let { time ->
-                            Text(
-                                text = time,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(end = 8.dp)
-                            )
+                    // Close Chat Action
+                    IconButton(onClick = {
+                        viewModel.removeListeners()
+                        viewModel.closeChat()
+                        navController.navigate("dashboard") {
+                            popUpTo(navController.graph.startDestinationId) { inclusive = true }
                         }
-
-                        IconButton(onClick = { showDeleteMenu = true }) {
-                            Icon(
-                                imageVector = if (deletionTime != null) Icons.Filled.Schedule else Icons.Filled.MoreVert,
-                                contentDescription = "Auto-delete settings",
-                                tint = if (deletionTime != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-
-                        // Menu for Auto-Delete Settings
-                        DropdownMenu(
-                            expanded = showDeleteMenu,
-                            onDismissRequest = { showDeleteMenu = false }
-                        ) {
-                            Text(
-                                "Auto-delete messages after:",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Divider()
-
-                            // --- Menu Items (with proper check for selected state) ---
-                            listOf(5000L to "5 Seconds", 60000L to "1 Minute", 3600000L to "1 Hour", 86400000L to "24 Hours", 604800000L to "7 Days").forEach { (time, label) ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            if (deletionTime == time) {
-                                                Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp).padding(end = 4.dp), tint = MaterialTheme.colorScheme.primary)
-                                            } else {
-                                                Spacer(Modifier.width(22.dp))
-                                            }
-                                            Text(label)
-                                        }
-                                    },
-                                    onClick = {
-                                        viewModel.setDeletionTime(time)
-                                        showDeleteMenu = false
-                                        Toast.makeText(ctx, "Messages will auto-delete in $label", Toast.LENGTH_SHORT).show()
-                                    }
-                                )
-                            }
-
-                            if (deletionTime != null) {
-                                Divider()
-                                DropdownMenuItem(
-                                    text = { Text("Off", color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        viewModel.setDeletionTime(null)
-                                        showDeleteMenu = false
-                                        Toast.makeText(ctx, "Auto-delete disabled", Toast.LENGTH_SHORT).show()
-                                    }
-                                )
-                            }
-                        }
-
-                        // Close Chat Action (Moved out of the DropdownMenu)
-                        IconButton(onClick = {
-                            viewModel.removeListeners()
-                            viewModel.closeChat()
-                            navController.navigate("dashboard") {
-                                popUpTo(navController.graph.startDestinationId) { inclusive = true }
-                            }
-                        }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close Chat")
-                        }
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Chat")
                     }
                 }
             )
         }
     ) { padding ->
 
-        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
-        if (isDeleting || isUploading) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.3f))
-                    .clickable(enabled = false) {}
-                    .padding(padding) // Apply TopBar padding
-                    .statusBarsPadding(), // Ensures it doesn't overlap system status bar
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
-            }
-        }
+
 
         // --- EDIT MESSAGE DIALOG --- (Renders on top of content but under loader)
         messageToEdit?.let { msg ->
@@ -286,7 +226,25 @@ fun ChatScreen(
                     MessageRow(
                         message = msg,
                         isMine = isMine,
-                        onImageClick = { url -> fullScreenImageUrl = url },
+                        onImageClick = { url, type ->
+                            if (type == "image") {
+                                fullScreenImageUrl = url
+                            } else if (type == "video") {
+                                fullScreenVideoUrl = url
+                            } else {
+                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
+                                val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(url) ?: ""
+                                val mimeType = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
+                                intent.setDataAndType(Uri.parse(url), mimeType)
+                                intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                val chooser = android.content.Intent.createChooser(intent, "Open Document")
+                                try {
+                                    ctx.startActivity(chooser)
+                                } catch (e: Exception) {
+                                    Toast.makeText(ctx, "No app found to open this file", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
                         onEditClicked = {
                             messageToEdit = msg
                             editInput = msg.text
@@ -328,28 +286,77 @@ fun ChatScreen(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 IconButton(
-                    onClick = { mediaLauncher.launch("image/*") },
+                    onClick = { mediaLauncher.launch("*/*") },
                     enabled = !isUploading
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        imageVector = Icons.Default.AttachFile,
                         contentDescription = "Attach Media",
-                        modifier = Modifier
-                            .rotate(270f)
-                            .size(24.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        if (text.isNotBlank() && !sending && !isUploading) {
-                            sending = true
-                            coroutine.launch { viewModel.sendMessage(text.trim()); text = ""; viewModel.updateTyping(false); sending = false }
-                        }
-                    },
-                    enabled = text.isNotBlank() && !sending && !isUploading
-                ) {
-                    Text("Send")
+                if (text.isNotBlank()) {
+                    Button(
+                        onClick = {
+                            if (!sending && !isUploading) {
+                                sending = true
+                                coroutine.launch { viewModel.sendMessage(text.trim()); text = ""; viewModel.updateTyping(false); sending = false }
+                            }
+                        },
+                        enabled = !sending && !isUploading
+                    ) {
+                        Text("Send")
+                    }
+                } else {
+                    val permissionCheck = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(if (isRecording) Color.Red else MaterialTheme.colorScheme.primary)
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onPress = {
+                                        if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
+                                            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                            return@detectTapGestures
+                                        }
+                                        
+                                        val file = File(ctx.cacheDir, "audio_${System.currentTimeMillis()}.m4a")
+                                        audioOutputFile = file
+                                        isRecording = true
+                                        
+                                        val recorder = MediaRecorder().apply {
+                                            setAudioSource(MediaRecorder.AudioSource.MIC)
+                                            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                                            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                                            setOutputFile(file.absolutePath)
+                                            try { prepare(); start() } catch (e: Exception) { e.printStackTrace() }
+                                        }
+                                        mediaRecorder = recorder
+                                        
+                                        tryAwaitRelease()
+                                        
+                                        isRecording = false
+                                        try {
+                                            mediaRecorder?.stop()
+                                            mediaRecorder?.release()
+                                        } catch (e: Exception) {}
+                                        mediaRecorder = null
+                                        
+                                        audioOutputFile?.let {
+                                            if (it.exists() && it.length() > 0) {
+                                                viewModel.uploadMediaFile(ctx.contentResolver, Uri.fromFile(it), "")
+                                            }
+                                        }
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Mic, contentDescription = "Record Audio", tint = Color.White)
+                    }
                 }
             }
         }
@@ -359,6 +366,14 @@ fun ChatScreen(
             FullScreenImageViewer(
                 imageUrl = url,
                 onDismiss = { fullScreenImageUrl = null }
+            )
+        }
+
+        // --- FULL SCREEN VIDEO VIEWER ---
+        fullScreenVideoUrl?.let { url ->
+            FullScreenVideoViewer(
+                url = url,
+                onClose = { fullScreenVideoUrl = null }
             )
         }
 
@@ -374,6 +389,21 @@ fun ChatScreen(
                     pickedUri = null
                 }
             )
+        }
+
+        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
+        if (isDeleting || isUploading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.3f))
+                    .clickable(enabled = false) {}
+                    .padding(padding) // Apply TopBar padding
+                    .statusBarsPadding(), // Ensures it doesn't overlap system status bar
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
+            }
         }
     }
 }
@@ -425,7 +455,18 @@ fun MediaPreviewDialog(
     onDismiss: () -> Unit,
     onUpload: (caption: String) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var caption by remember { mutableStateOf("") }
+    
+    val mimeType = remember(pickedUri) { context.contentResolver.getType(pickedUri) ?: "" }
+    val isImage = mimeType.startsWith("image/")
+    val isVideo = mimeType.startsWith("video/")
+    
+    val title = when {
+        isImage -> "Preview Image"
+        isVideo -> "Preview Video"
+        else -> "Send Document"
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -435,18 +476,37 @@ fun MediaPreviewDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
-        title = { Text("Preview Image") },
+        title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                AsyncImage(
-                    model = pickedUri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                )
+                if (isImage) {
+                    AsyncImage(
+                        model = pickedUri,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .clip(MaterialTheme.shapes.medium)
+                    )
+                } else if (isVideo) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .background(Color.Black, MaterialTheme.shapes.medium),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.PlayCircleOutline, contentDescription = "Video", modifier = Modifier.size(64.dp), tint = Color.White)
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(16.dp)) {
+                        Icon(Icons.Default.InsertDriveFile, contentDescription = "Document", modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.width(16.dp))
+                        Text("Ready to send document")
+                    }
+                }
+                
                 OutlinedTextField(
                     value = caption,
                     onValueChange = { caption = it },
@@ -465,7 +525,7 @@ fun MediaPreviewDialog(
 fun MessageRow(
     message: ChatMessage,
     isMine: Boolean,
-    onImageClick: (String) -> Unit,
+    onImageClick: (String, String) -> Unit,
     onEditClicked: () -> Unit,
     onDeleteClicked: () -> Unit
 ) {
@@ -494,28 +554,68 @@ fun MessageRow(
                 .combinedClickable(
                     onClick = {
                         if (isMediaMessage && message.mediaUrl != null) {
-                            onImageClick(message.mediaUrl)
+                            onImageClick(message.mediaUrl, message.mediaType ?: "image")
                         }
                     },
                     onLongClick = { showMenu = true }
                 )
         ) {
-            Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
+            Column(modifier = Modifier.padding(all = if (isMediaMessage) 4.dp else 10.dp)) {
 
                 if (isMediaMessage && message.mediaUrl != null) {
-                    // --- MEDIA DISPLAY ---
-                    AsyncImage(
-                        model = message.mediaUrl,
-                        contentDescription = message.text,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .sizeIn(minWidth = 150.dp, minHeight = 150.dp, maxHeight = 200.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .padding(bottom = if (message.text.isNotBlank() && message.text != "Uploading Image...") 6.dp else 0.dp)
-                    )
-                    // Display the accompanying text/caption below the image
-                    if (message.text.isNotBlank() && message.text != "Uploading Image...") {
-                        Text(message.text, color = MaterialTheme.colorScheme.onSurface)
+                    val displayUrl = if (message.mediaType == "video" && message.mediaUrl.contains("cloudinary")) {
+                        message.mediaUrl.substringBeforeLast(".") + ".jpg"
+                    } else {
+                        message.mediaUrl
+                    }
+
+                    if (message.mediaType == "raw") {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth(0.9f)
+                                .padding(4.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.Black.copy(alpha = 0.1f))
+                                .padding(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.InsertDriveFile, contentDescription = "Document", modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                text = message.text.takeIf { it.isNotBlank() } ?: "Document",
+                                color = textColor,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    } else if (message.mediaType == "audio") {
+                        AudioPlayerBubble(message = message)
+                    } else {
+                        Box(contentAlignment = Alignment.Center) {
+                            AsyncImage(
+                                model = displayUrl,
+                                contentDescription = message.text,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .sizeIn(minWidth = 200.dp, minHeight = 200.dp, maxHeight = 300.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                            )
+                            if (message.mediaType == "video") {
+                                Icon(Icons.Default.PlayCircleOutline, contentDescription = "Play Video", modifier = Modifier.size(48.dp), tint = Color.White)
+                            }
+                        }
+                        if (message.text.isNotBlank() && !message.text.startsWith("Uploading")) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(message.text, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp))
+                        }
                     }
                 } else {
                     // --- TEXT DISPLAY ---
@@ -542,5 +642,118 @@ fun MessageRow(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun FullScreenVideoViewer(url: String, onClose: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onClose() }) // Tap outside video to close
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        AndroidView(
+            factory = { context ->
+                android.widget.VideoView(context).apply {
+                    setVideoPath(url)
+                    val mediaController = android.widget.MediaController(context)
+                    mediaController.setAnchorView(this)
+                    setMediaController(mediaController)
+                    setOnPreparedListener { mp ->
+                        mp.isLooping = true
+                        start()
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().wrapContentHeight()
+        )
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+        }
+    }
+}
+
+@Composable
+fun AudioPlayerBubble(message: ChatMessage) {
+    var isPlaying by remember { mutableStateOf(false) }
+    var mediaPlayer by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+    var progress by remember { mutableStateOf(0f) }
+    
+    LaunchedEffect(isPlaying) {
+        while (isPlaying && mediaPlayer != null) {
+            val dur = mediaPlayer?.duration ?: 0
+            if (dur > 0) {
+                progress = mediaPlayer!!.currentPosition.toFloat() / dur
+            }
+            kotlinx.coroutines.delay(50)
+        }
+    }
+    
+    DisposableEffect(message.mediaUrl) {
+        onDispose {
+            mediaPlayer?.release()
+        }
+    }
+    
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth(0.7f)
+            .padding(4.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color.Black.copy(alpha = 0.1f))
+            .padding(vertical = 8.dp, horizontal = 12.dp)
+    ) {
+        IconButton(
+            onClick = {
+                if (isPlaying) {
+                    mediaPlayer?.pause()
+                    isPlaying = false
+                } else {
+                    if (mediaPlayer == null) {
+                        mediaPlayer = android.media.MediaPlayer().apply {
+                            setDataSource(message.mediaUrl)
+                            prepareAsync()
+                            setOnPreparedListener { 
+                                start()
+                                isPlaying = true
+                            }
+                            setOnCompletionListener { 
+                                isPlaying = false
+                            }
+                        }
+                    } else {
+                        mediaPlayer?.start()
+                        isPlaying = true
+                    }
+                }
+            },
+            modifier = Modifier.size(36.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+        ) {
+            Icon(
+                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                contentDescription = "Play/Pause",
+                tint = Color.White
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        // Dynamic visualization
+        LinearProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.weight(1f).height(4.dp).clip(CircleShape),
+            color = MaterialTheme.colorScheme.primary,
+            trackColor = Color.Gray.copy(alpha = 0.5f)
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Default.Mic, contentDescription = "Mic", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
     }
 }
