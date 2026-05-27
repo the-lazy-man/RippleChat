@@ -312,6 +312,18 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    fun sendLocationMessage(lat: Double, lng: Double) {
+        val receiver = peerUid ?: return
+        val messageId = repo.generateMessageId()
+        sendMediaMessage(
+            messageId = messageId,
+            url = "$lat,$lng",
+            text = "Shared Location",
+            mediaType = "location",
+            receiver = receiver
+        )
+    }
+
     fun sendMessage(text: String) {
         val chatId = currentChatId ?: return
         val sender = currentUserId ?: return

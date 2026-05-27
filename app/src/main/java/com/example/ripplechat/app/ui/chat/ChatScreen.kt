@@ -21,6 +21,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import com.google.android.gms.location.LocationServices
+import android.annotation.SuppressLint
+import android.content.Intent
+import androidx.compose.material.icons.filled.LocationOn
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
@@ -87,6 +91,31 @@ fun ChatScreen(
     var showMediaPreview by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     
+    // --- LOCATION SHARING STATE ---
+    var showGpsDialog by remember { mutableStateOf(false) }
+
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        val fine = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
+        val coarse = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] ?: false
+        if (fine || coarse) {
+            @SuppressLint("MissingPermission")
+            fusedLocationClient.getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { location ->
+                    if (location != null) {
+                        viewModel.sendLocationMessage(location.latitude, location.longitude)
+                    } else {
+                        showGpsDialog = true
+                    }
+                }
+                .addOnFailureListener {
+                    Toast.makeText(ctx, "Failed to get location", Toast.LENGTH_SHORT).show()
+                }
+        } else {
+            Toast.makeText(ctx, "Location permission is required to share location", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     // --- AUDIO RECORDING STATE ---
     var isRecording by remember { mutableStateOf(false) }
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
@@ -100,6 +129,7 @@ fun ChatScreen(
     // --- FULL SCREEN VIEWER STATE ---
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
     var fullScreenVideoUrl by remember { mutableStateOf<String?>(null) }
+    var fullScreenLocationUrl by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(chatId) { viewModel.init(chatId, peerUid) }
     DisposableEffect(Unit) { onDispose { viewModel.removeListeners(); viewModel.closeChat() } }
@@ -208,6 +238,31 @@ fun ChatScreen(
             )
         }
 
+        // --- GPS SETTINGS DIALOG ---
+        if (showGpsDialog) {
+            AlertDialog(
+                onDismissRequest = { showGpsDialog = false },
+                title = { Text("Enable GPS") },
+                text = { Text("Your GPS seems to be turned off. Do you want to open settings to turn it on?") },
+                confirmButton = {
+                    Button(onClick = { 
+                        showGpsDialog = false
+                        ctx.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                    }) {
+                        Text("Okay")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { 
+                        showGpsDialog = false
+                        Toast.makeText(ctx, "Cannot share location without GPS", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Text("No")
+                    }
+                }
+            )
+        }
+
         // --- MAIN CHAT CONTENT ---
         Column(
             modifier = Modifier
@@ -231,6 +286,8 @@ fun ChatScreen(
                                 fullScreenImageUrl = url
                             } else if (type == "video") {
                                 fullScreenVideoUrl = url
+                            } else if (type == "location") {
+                                fullScreenLocationUrl = url
                             } else {
                                 val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
                                 val extension = android.webkit.MimeTypeMap.getFileExtensionFromUrl(url) ?: ""
@@ -292,6 +349,20 @@ fun ChatScreen(
                     Icon(
                         imageVector = Icons.Default.AttachFile,
                         contentDescription = "Attach Media",
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                IconButton(
+                    onClick = { 
+                        locationPermissionLauncher.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                        )
+                    },
+                    enabled = !isUploading
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.LocationOn,
+                        contentDescription = "Share Location",
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -374,6 +445,14 @@ fun ChatScreen(
             FullScreenVideoViewer(
                 url = url,
                 onClose = { fullScreenVideoUrl = null }
+            )
+        }
+
+        // --- FULL SCREEN LOCATION VIEWER ---
+        fullScreenLocationUrl?.let { url ->
+            FullScreenLocationViewer(
+                locationUrl = url,
+                onClose = { fullScreenLocationUrl = null }
             )
         }
 
@@ -530,6 +609,7 @@ fun MessageRow(
     onDeleteClicked: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val ctx = LocalContext.current
     val timestampText = remember(message.timestamp) {
         SimpleDateFormat("hh:mm a").format(Date(message.timestamp))
     }
@@ -598,6 +678,52 @@ fun MessageRow(
                         }
                     } else if (message.mediaType == "audio") {
                         AudioPlayerBubble(message = message)
+                    } else if (message.mediaType == "location") {
+                        val coords = message.mediaUrl.split(",")
+                        if (coords.size == 2) {
+                            val lat = coords[0]
+                            val lng = coords[1]
+                            
+                            // Calculate OSM Tile X and Y
+                            val zoom = 15
+                            val n = Math.pow(2.0, zoom.toDouble())
+                            val x = ((lng.toDouble() + 180.0) / 360.0 * n).toInt()
+                            val latRad = lat.toDouble() * Math.PI / 180.0
+                            val y = ((1.0 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0 * n).toInt()
+                            
+                            // Using CartoDB Voyager tiles which are more permissive and look very clean
+                            val tileUrl = "https://a.basemaps.cartocdn.com/rastertiles/voyager/$zoom/$x/$y.png"
+                            
+                            val imageRequest = coil.request.ImageRequest.Builder(ctx)
+                                .data(tileUrl)
+                                .addHeader("User-Agent", "RippleChatApp/1.0")
+                                .build()
+                            
+                            Box(
+                                modifier = Modifier
+                                    .size(200.dp, 150.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        onImageClick(message.mediaUrl, "location")
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                // 1. Map Image
+                                AsyncImage(
+                                    model = imageRequest,
+                                    contentDescription = "Map Snippet",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                // 2. Red Pin in the center
+                                Icon(
+                                    Icons.Default.LocationOn,
+                                    contentDescription = "Pin",
+                                    modifier = Modifier.size(36.dp).padding(bottom = 18.dp),
+                                    tint = Color.Red
+                                )
+                            }
+                        }
                     } else {
                         Box(contentAlignment = Alignment.Center) {
                             AsyncImage(
@@ -671,6 +797,55 @@ fun FullScreenVideoViewer(url: String, onClose: () -> Unit) {
             },
             modifier = Modifier.fillMaxWidth().wrapContentHeight()
         )
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+        }
+    }
+}
+
+@Composable
+fun FullScreenLocationViewer(locationUrl: String, onClose: () -> Unit) {
+    val ctx = LocalContext.current
+    val coords = locationUrl.split(",")
+    if (coords.size != 2) return
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onClose() })
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Icon(Icons.Default.LocationOn, contentDescription = "Location", modifier = Modifier.size(80.dp), tint = Color.Red)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Shared Location", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            Spacer(modifier = Modifier.height(32.dp))
+            Button(onClick = {
+                val lat = coords[0]
+                val lng = coords[1]
+                val gmmIntentUri = Uri.parse("geo:${lat},${lng}?q=${lat},${lng}(Shared+Location)")
+                val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
+                try {
+                    ctx.startActivity(mapIntent)
+                } catch(e: Exception) {
+                    Toast.makeText(ctx, "Google Maps is not installed", Toast.LENGTH_SHORT).show()
+                }
+            }) {
+                Text("Show on Maps")
+            }
+        }
+        
         IconButton(
             onClick = onClose,
             modifier = Modifier
