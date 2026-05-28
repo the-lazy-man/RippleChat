@@ -694,7 +694,7 @@ fun FullScreenLocationViewer(locationUrl: String, onClose: () -> Unit) {
 
     // Geoapify offers a highly detailed, fast Static Map API. 
     // It's 100% FREE up to 3000 requests/day and requires NO CREDIT CARD to sign up.
-    val geoapifyApiKey = "ce791313d2284ceead3238062a65dff9"
+    val geoapifyApiKey = com.example.ripplechat.BuildConfig.GEOAPIFY_API_KEY
     
     val mapUrl = "https://maps.geoapify.com/v1/staticmap?style=osm-bright-smooth&width=800&height=800&center=lonlat:$lng,$lat&zoom=15&marker=lonlat:$lng,$lat;type:material;color:%23ea4335;size:x-large&apiKey=$geoapifyApiKey"
 
@@ -960,7 +960,7 @@ fun MessageRow(
                             val lat = coords[0].trim()
                             val lng = coords[1].trim()
                             
-                            val geoapifyApiKey = "ce791313d2284ceead3238062a65dff9"
+                            val geoapifyApiKey = com.example.ripplechat.BuildConfig.GEOAPIFY_API_KEY
                             val mapUrl = "https://maps.geoapify.com/v1/staticmap?style=osm-bright-smooth&width=400&height=300&center=lonlat:$lng,$lat&zoom=15&marker=lonlat:$lng,$lat;type:material;color:%23ea4335;size:large&apiKey=$geoapifyApiKey"
                             
                             Box(
