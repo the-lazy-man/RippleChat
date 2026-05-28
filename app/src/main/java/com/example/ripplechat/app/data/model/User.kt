@@ -6,5 +6,6 @@ data class User(
     val email: String = "",
         val usernameIndex: String = "",
     val profileImageUrl: String? = null,
-    val fcmToken: String? = null
+    val fcmToken: String? = null,
+    val upiId: String? = null
 )

@@ -1,5 +1,8 @@
 package com.example.ripplechat
 
+import androidx.navigation.navDeepLink
+import com.google.firebase.auth.FirebaseAuth
+import androidx.compose.runtime.LaunchedEffect
 import LoginScreen
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
@@ -21,6 +24,33 @@ fun NavGraph(navController: NavHostController) {
         composable("signup") { SignupScreen(navController) }
         composable("dashboard") { DashboardScreen(navController) }
         composable("profile") { ProfileScreen(navController) }
+        
+        // Deep Link Route for starting a chat
+        composable(
+            route = "deeplink_chat/{peerUid}/{peerName}",
+            deepLinks = listOf(
+                navDeepLink { uriPattern = "ripplechat://chat/{peerUid}/{peerName}" }
+            )
+        ) { backStackEntry ->
+            val peerUid = backStackEntry.arguments?.getString("peerUid") ?: ""
+            val peerName = backStackEntry.arguments?.getString("peerName") ?: ""
+            val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+            
+            if (currentUid != null) {
+                val chatId = if (currentUid < peerUid) "$currentUid-$peerUid" else "$peerUid-$currentUid"
+                ChatScreen(
+                    navController = navController,
+                    chatId = chatId,
+                    peerUid = peerUid,
+                    peerName = peerName
+                )
+            } else {
+                LaunchedEffect(Unit) {
+                    navController.navigate("login") { popUpTo(0) }
+                }
+            }
+        }
+        
         composable(
             route = "chat/{chatId}/{peerUid}/{peerName}"
         ) { backStackEntry ->

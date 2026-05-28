@@ -11,9 +11,11 @@ import com.example.ripplechat.app.data.model.firebase.FirebaseSource
 import com.example.ripplechat.data.repository.ChatRepository
 import com.google.firebase.firestore.ListenerRegistration
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -24,14 +26,19 @@ class DashBoardVM @Inject constructor(
     private val notificationPreferences: NotificationPreferences
 
 ) : ViewModel() {
-    val mutedUsers: Flow<Set<String>> = notificationPreferences.mutedUsersFlow
+    val mutedUsers: StateFlow<Set<String>> = notificationPreferences.mutedUsersFlow.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5000),
+        emptySet()
+    )
 
-    fun muteUser (userId: String) {
+    fun muteUser(userId: String) {
         viewModelScope.launch {
             notificationPreferences.addMutedUser(userId)
         }
     }
-    fun unmuteUser (userId: String) {  // Renamed from removeMutedUser  for clarity
+
+    fun unmuteUser(userId: String) {  // Renamed from removeMutedUser  for clarity
         viewModelScope.launch {
             notificationPreferences.removeMutedUser(userId)
         }
@@ -44,7 +51,7 @@ class DashBoardVM @Inject constructor(
     private val _searchResults = MutableStateFlow<List<User>>(emptyList())
     val searchResults = _searchResults.asStateFlow()
 
-    var showToast  = MutableStateFlow<Boolean>(false)
+    var showToast = MutableStateFlow<Boolean>(false)
     private var chatsReg: ListenerRegistration? = null
 
     // State for all users fetched when search is activated
@@ -52,16 +59,19 @@ class DashBoardVM @Inject constructor(
     val allUsersForSearch = _allUsersForSearch.asStateFlow()
 
     /**
-     * Removes a peer from the current user's contacts list.
+     * Deletes chat from dashboard + wipes all messages/media.
+     * Does NOT remove the user from contacts — they can still be found via search.
      */
     fun removeContact(peerUid: String) {
         val uid = firebase.currentUserUid() ?: return
         viewModelScope.launch {
             try {
-                // The FirebaseSource logic handles removing contacts and deleting the chat
-                firebase.deleteContact(uid, peerUid)
+                // 1. Wipe Cloudinary media + Firestore messages + Room cache
+                chatRepository.clearChat(uid, peerUid)
+                // 2. Remove dashboard entry so chat disappears from list
+                firebase.removeChatFromDashboard(uid, peerUid)
             } catch (e: Exception) {
-                Log.e("DashBoardVM", "Error removing contact", e)
+                Log.e("DashBoardVM", "Error clearing chat", e)
             }
         }
     }
@@ -111,7 +121,7 @@ class DashBoardVM @Inject constructor(
                         profileImageUrl = data["profileImageUrl"] as? String
                     )
                 }
-            }catch (e : Exception){
+            } catch (e: Exception) {
                 _searchResults.value = emptyList()
                 showToast.value = true
                 Log.e("DashBoardVM", "Error searching users: ${e.message}")
@@ -132,7 +142,8 @@ class DashBoardVM @Inject constructor(
                     peerName = data["peerName"] as? String ?: "Unknown",
                     peerProfilePic = data["peerProfilePic"] as? String,
                     lastMessage = data["lastMessage"] as? String ?: "",
-                    lastTimestamp = (data["lastTimestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time ?: 0,
+                    lastTimestamp = (data["lastTimestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time
+                        ?: 0,
                     unreadCount = (data["unreadCount"] as? Long)?.toInt() ?: 0,
                     isMuted = false // TODO: Add muted tracking later
                 )

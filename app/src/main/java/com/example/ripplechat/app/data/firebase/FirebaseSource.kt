@@ -67,15 +67,87 @@ class FirebaseSource(
             .delete()
             .await()
     }
-    // 🔹 FirebaseSource.kt
+    // 🔹 Removes contact + wipes dashboard entry. Does NOT delete messages/media (use clearChatOnly for that).
     suspend fun deleteContact(myUid: String, peerUid: String) {
         // Delete from my contacts
         firestore.collection("users").document(myUid)
             .collection("contacts").document(peerUid).delete().await()
 
-        // Delete chat messages for my side
         val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
-        deleteChatMessages(chatId)
+
+        // Delete from my sub-collection chats so it disappears from the Dashboard UI
+        firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId).delete().await()
+    }
+
+    /**
+     * Removes ONLY the dashboard chat entry (users/{uid}/chats/{chatId}).
+     * Contact subcollection is untouched — user can still be found via search and re-added.
+     */
+    suspend fun removeChatFromDashboard(myUid: String, peerUid: String) {
+        val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
+        firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId).delete().await()
+    }
+
+    /**
+     * STEP 1: Scan all messages in a chat, collect every mediaUrl, and delete each from Cloudinary.
+     * Cloudinary URL format: https://res.cloudinary.com/{cloud}/{type}/upload/v.../public_id.ext
+     * We extract the public_id and resource_type from the URL automatically.
+     */
+    suspend fun wipeChatMedia(chatId: String) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            val messages = firestore.collection("chats").document(chatId)
+                .collection("messages").get().await()
+
+            val client = okhttp3.OkHttpClient()
+            val jsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+            for (doc in messages.documents) {
+                val mediaUrl = doc.getString("mediaUrl") ?: continue
+                val mediaType = doc.getString("mediaType") ?: "image"
+
+                // Only process Cloudinary URLs
+                if (!mediaUrl.contains("res.cloudinary.com")) continue
+
+                // Extract public_id from URL
+                // e.g. https://res.cloudinary.com/demo/image/upload/v1234/chat_uid_ts.jpg
+                //  -> publicId = "chat_uid_ts", resourceType = "image"
+                val urlPath = mediaUrl.substringAfter("/upload/")
+                    .substringAfter("/") // skip version segment like "v1234567/"
+                val publicId = urlPath.substringBeforeLast(".")
+
+                val resourceType = when {
+                    mediaType == "video" || mediaUrl.contains("/video/") -> "video"
+                    mediaType == "audio" || mediaUrl.contains("/raw/") -> "raw"
+                    else -> "image"
+                }
+
+                val json = org.json.JSONObject().apply {
+                    put("public_id", publicId)
+                    put("resource_type", resourceType)
+                }.toString()
+
+                try {
+                    val body = okhttp3.RequestBody.create(jsonMediaType, json)
+                    val request = okhttp3.Request.Builder()
+                        .url("https://auth-server-imagekit-for-ripplechat.onrender.com/cloudinary-delete")
+                        .post(body)
+                        .build()
+                    val response = client.newCall(request).execute()
+                    if (response.isSuccessful) {
+                        Log.d("FirebaseSource", "Cloudinary delete OK: $publicId ($resourceType)")
+                    } else {
+                        Log.e("FirebaseSource", "Cloudinary delete failed (${response.code}): ${response.body?.string()}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("FirebaseSource", "Error deleting Cloudinary asset $publicId: ${e.message}")
+                    // Non-critical — continue deleting other assets
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseSource", "wipeChatMedia failed: ${e.message}")
+        }
     }
     // FIX: Add missing function to FirebaseSource
     suspend fun getAllUsers(): List<Pair<String, Map<String, Any>>> {
@@ -93,16 +165,49 @@ class FirebaseSource(
             .update(mapOf("text" to newText, "edited" to true))
             .await()
     }
+    /**
+     * STEP 2: Delete all Firestore messages + the parent chat doc.
+     * The parent chat doc (chats/{chatId}) stores: lastMessage, typing status.
+     * Deleting it frees up that metadata too.
+     */
     suspend fun deleteChatMessages(chatId: String) {
-        // WARNING: this can be expensive; we batch delete messages for this chat for current user.
-        val col = firestore.collection("chats").document(chatId).collection("messages").get().await()
-        val batch = firestore.batch()
-        for (doc in col.documents) {
-            batch.delete(doc.reference)
+        try {
+            val col = firestore.collection("chats").document(chatId).collection("messages").get().await()
+            val documents = col.documents
+
+            // Firestore batch limit = 500 ops — chunk to avoid crash
+            val chunkedDocs = documents.chunked(500)
+            for (chunk in chunkedDocs) {
+                val batch = firestore.batch()
+                for (doc in chunk) { batch.delete(doc.reference) }
+                batch.commit().await()
+            }
+
+            // Delete the parent chat document (chats/{chatId} stores typing, lastMessage etc.)
+            firestore.collection("chats").document(chatId).delete().await()
+        } catch (e: Exception) {
+            Log.e("FirebaseSource", "Error clearing chat messages: ${e.message}")
         }
-        batch.commit().await()
-        // optionally delete chat doc
-        firestore.collection("chats").document(chatId).delete().await()
+    }
+
+    /**
+     * STEP 3 (Dashboard "Clear Chat" action):
+     * Clears messages + media but keeps the contact and dashboard entry intact.
+     * The chat remains visible in the dashboard but appears empty.
+     */
+    suspend fun clearChatOnly(myUid: String, peerUid: String) {
+        val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
+        // 1. Delete Cloudinary media assets
+        wipeChatMedia(chatId)
+        // 2. Delete Firestore messages + parent chat doc
+        deleteChatMessages(chatId)
+        // 3. Reset the dashboard metadata so it shows "No messages yet" instead of old last message
+        firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId)
+            .update(mapOf(
+                "lastMessage" to "",
+                "unreadCount" to 0
+            )).await()
     }
 
     // Search users by nameIndex (excludes me)
