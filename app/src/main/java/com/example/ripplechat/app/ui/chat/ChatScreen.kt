@@ -4,6 +4,11 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,12 +26,18 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Stop
 import com.google.android.gms.location.LocationServices
 import android.annotation.SuppressLint
 import android.content.Intent
 import androidx.compose.material.icons.filled.LocationOn
 import android.Manifest
 import android.content.pm.PackageManager
+import android.location.Location
 import android.media.MediaRecorder
 import androidx.core.content.ContextCompat
 import java.io.File
@@ -42,14 +53,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
@@ -90,9 +105,14 @@ fun ChatScreen(
     // --- MEDIA PREVIEW STATE ---
     var showMediaPreview by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
-    
-    // --- LOCATION SHARING STATE ---
+
+    // --- ATTACHMENT BOTTOM SHEET ---
+    var showAttachmentSheet by remember { mutableStateOf(false) }
+
+    // --- LOCATION STATE ---
     var showGpsDialog by remember { mutableStateOf(false) }
+    var showLocationConfirmDialog by remember { mutableStateOf(false) }
+    var pendingLocation by remember { mutableStateOf<Location?>(null) }
 
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(ctx) }
     val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -103,7 +123,8 @@ fun ChatScreen(
             fusedLocationClient.getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
                 .addOnSuccessListener { location ->
                     if (location != null) {
-                        viewModel.sendLocationMessage(location.latitude, location.longitude)
+                        pendingLocation = location
+                        showLocationConfirmDialog = true // Show confirm dialog instead of sending directly
                     } else {
                         showGpsDialog = true
                     }
@@ -115,11 +136,13 @@ fun ChatScreen(
             Toast.makeText(ctx, "Location permission is required to share location", Toast.LENGTH_SHORT).show()
         }
     }
-    
+
     // --- AUDIO RECORDING STATE ---
     var isRecording by remember { mutableStateOf(false) }
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var audioOutputFile by remember { mutableStateOf<File?>(null) }
+    var pendingAudioFile by remember { mutableStateOf<File?>(null) } // Recorded file awaiting user confirmation
+    var showAudioReviewDialog by remember { mutableStateOf(false) }
     val recordPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
         if (!isGranted) {
             Toast.makeText(ctx, "Microphone permission required", Toast.LENGTH_SHORT).show()
@@ -168,6 +191,7 @@ fun ChatScreen(
     )
 
     // --- MAIN SCAFFOLD ---
+    Box(modifier = Modifier.fillMaxSize()) { // Outer Box for true full-screen overlay support
     Scaffold(
         topBar = {
             TopAppBar(
@@ -198,18 +222,6 @@ fun ChatScreen(
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                },
-                actions = {
-                    // Close Chat Action
-                    IconButton(onClick = {
-                        viewModel.removeListeners()
-                        viewModel.closeChat()
-                        navController.navigate("dashboard") {
-                            popUpTo(navController.graph.startDestinationId) { inclusive = true }
-                        }
-                    }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close Chat")
-                    }
                 }
             )
         }
@@ -235,6 +247,82 @@ fun ChatScreen(
                     Button(onClick = { viewModel.editExistingMessage(msg.messageId, editInput.trim()); messageToEdit = null }, enabled = editInput.isNotBlank() && editInput.trim() != msg.text.trim()) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { messageToEdit = null }) { Text("Cancel") } }
+            )
+        }
+
+        // --- LOCATION CONFIRM DIALOG ---
+        if (showLocationConfirmDialog && pendingLocation != null) {
+            AlertDialog(
+                onDismissRequest = { showLocationConfirmDialog = false; pendingLocation = null },
+                title = { Text("Share Location") },
+                text = {
+                    Column {
+                        Icon(Icons.Default.LocationOn, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(40.dp).align(Alignment.CenterHorizontally))
+                        Spacer(Modifier.height(8.dp))
+                        Text("Share your current location with $peerName?")
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${String.format("%.5f", pendingLocation!!.latitude)}, ${String.format("%.5f", pendingLocation!!.longitude)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        viewModel.sendLocationMessage(pendingLocation!!.latitude, pendingLocation!!.longitude)
+                        showLocationConfirmDialog = false
+                        pendingLocation = null
+                    }) { Text("Send") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLocationConfirmDialog = false; pendingLocation = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        // --- AUDIO REVIEW DIALOG ---
+        if (showAudioReviewDialog && pendingAudioFile != null) {
+            AlertDialog(
+                onDismissRequest = { showAudioReviewDialog = false; pendingAudioFile?.delete(); pendingAudioFile = null },
+                title = { Text("Send Voice Message?") },
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Mic, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Voice message recorded.")
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        pendingAudioFile?.let {
+                            if (it.exists() && it.length() > 0) {
+                                viewModel.uploadMediaFile(ctx.contentResolver, Uri.fromFile(it), "")
+                            }
+                        }
+                        showAudioReviewDialog = false
+                        pendingAudioFile = null
+                    }) {
+                        Icon(Icons.Default.Send, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Send")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        pendingAudioFile?.delete()
+                        pendingAudioFile = null
+                        showAudioReviewDialog = false
+                    }) {
+                        Icon(Icons.Default.Delete, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Discard")
+                    }
+                }
             )
         }
 
@@ -317,10 +405,11 @@ fun ChatScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
                     .imePadding(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
+                // Message TextField
                 OutlinedTextField(
                     value = text,
                     onValueChange = {
@@ -338,54 +427,60 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message...") },
                     singleLine = true,
-                    enabled = !isUploading
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-
-                IconButton(
-                    onClick = { mediaLauncher.launch("*/*") },
-                    enabled = !isUploading
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AttachFile,
-                        contentDescription = "Attach Media",
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                IconButton(
-                    onClick = { 
-                        locationPermissionLauncher.launch(
-                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
-                        )
-                    },
-                    enabled = !isUploading
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.LocationOn,
-                        contentDescription = "Share Location",
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                if (text.isNotBlank()) {
-                    Button(
-                        onClick = {
-                            if (!sending && !isUploading) {
-                                sending = true
-                                coroutine.launch { viewModel.sendMessage(text.trim()); text = ""; viewModel.updateTyping(false); sending = false }
-                            }
-                        },
-                        enabled = !sending && !isUploading
-                    ) {
-                        Text("Send")
+                    enabled = !isUploading,
+                    trailingIcon = {
+                        // Attachment icon INSIDE the text field (WhatsApp style)
+                        IconButton(onClick = { showAttachmentSheet = true }, enabled = !isUploading) {
+                            Icon(Icons.Default.AttachFile, contentDescription = "Attach",
+                                modifier = Modifier.rotate(45f))
+                        }
                     }
-                } else {
-                    val permissionCheck = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+                )
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Send OR Mic button
+                if (text.isNotBlank()) {
+                    // Send button
                     Box(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
-                            .background(if (isRecording) Color.Red else MaterialTheme.colorScheme.primary)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable(enabled = !sending && !isUploading) {
+                                sending = true
+                                coroutine.launch {
+                                    viewModel.sendMessage(text.trim())
+                                    text = ""
+                                    viewModel.updateTyping(false)
+                                    sending = false
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = "Send", tint = Color.White)
+                    }
+                } else {
+                    // Mic / Recording button
+                    val permissionCheck = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+
+                    // Pulse animation when recording
+                    val infiniteTransition = rememberInfiniteTransition(label = "mic_pulse")
+                    val pulseAlpha by infiniteTransition.animateFloat(
+                        initialValue = 1f, targetValue = 0.3f,
+                        animationSpec = infiniteRepeatable(tween(600)),
+                        label = "pulse"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isRecording) Color.Red
+                                else MaterialTheme.colorScheme.primary
+                            )
+                            .alpha(if (isRecording) pulseAlpha else 1f)
                             .pointerInput(Unit) {
                                 detectTapGestures(
                                     onPress = {
@@ -393,11 +488,11 @@ fun ChatScreen(
                                             recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                             return@detectTapGestures
                                         }
-                                        
+
                                         val file = File(ctx.cacheDir, "audio_${System.currentTimeMillis()}.m4a")
                                         audioOutputFile = file
                                         isRecording = true
-                                        
+
                                         val recorder = MediaRecorder().apply {
                                             setAudioSource(MediaRecorder.AudioSource.MIC)
                                             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
@@ -406,93 +501,115 @@ fun ChatScreen(
                                             try { prepare(); start() } catch (e: Exception) { e.printStackTrace() }
                                         }
                                         mediaRecorder = recorder
-                                        
-                                        tryAwaitRelease()
-                                        
+
+                                        tryAwaitRelease() // Wait until finger is lifted
+
                                         isRecording = false
                                         try {
                                             mediaRecorder?.stop()
                                             mediaRecorder?.release()
                                         } catch (e: Exception) {}
                                         mediaRecorder = null
-                                        
-                                        audioOutputFile?.let {
-                                            if (it.exists() && it.length() > 0) {
-                                                viewModel.uploadMediaFile(ctx.contentResolver, Uri.fromFile(it), "")
-                                            }
+
+                                        // Show review dialog instead of immediately sending
+                                        if (file.exists() && file.length() > 0) {
+                                            pendingAudioFile = file
+                                            showAudioReviewDialog = true
                                         }
                                     }
                                 )
                             },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Mic, contentDescription = "Record Audio", tint = Color.White)
+                        Icon(
+                            imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
+                            contentDescription = if (isRecording) "Recording..." else "Record Audio",
+                            tint = Color.White
+                        )
                     }
                 }
             }
         }
 
-        // --- FULL SCREEN IMAGE VIEWER (Renders on top of content/loader) ---
-        fullScreenImageUrl?.let { url ->
-            FullScreenImageViewer(
-                imageUrl = url,
-                onDismiss = { fullScreenImageUrl = null }
-            )
-        }
+        // (Dialogs/viewers moved outside Scaffold — see below)
 
-        // --- FULL SCREEN VIDEO VIEWER ---
-        fullScreenVideoUrl?.let { url ->
-            FullScreenVideoViewer(
-                url = url,
-                onClose = { fullScreenVideoUrl = null }
-            )
-        }
-
-        // --- FULL SCREEN LOCATION VIEWER ---
-        fullScreenLocationUrl?.let { url ->
-            FullScreenLocationViewer(
-                locationUrl = url,
-                onClose = { fullScreenLocationUrl = null }
-            )
-        }
-
-        // --- MEDIA PREVIEW DIALOG (Renders on top of content/loader) ---
-        if (showMediaPreview && pickedUri != null) {
-            MediaPreviewDialog(
-                pickedUri = pickedUri!!,
-                onDismiss = { showMediaPreview = false; pickedUri = null },
-                onUpload = { caption ->
-                    val resolver = ctx.contentResolver
-                    viewModel.uploadMediaFile(resolver, pickedUri!!, caption)
-                    showMediaPreview = false
-                    pickedUri = null
-                }
-            )
-        }
-
-        // --- GLOBAL LOADER OVERLAY (FIXED Z-ORDER: Renders on top of everything) ---
+        // --- GLOBAL LOADER OVERLAY ---
         if (isDeleting || isUploading) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.3f))
                     .clickable(enabled = false) {}
-                    .padding(padding) // Apply TopBar padding
-                    .statusBarsPadding(), // Ensures it doesn't overlap system status bar
+                    .padding(padding)
+                    .statusBarsPadding(),
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.tertiary)
             }
         }
     }
-}
+    } // end Scaffold
 
-// --- FULL SCREEN IMAGE VIEWER ---
+    // ================================================================
+    // TRUE FULL-SCREEN OVERLAYS (outside Scaffold → cover TopAppBar too)
+    // ================================================================
+
+    fullScreenImageUrl?.let { url ->
+        FullScreenImageViewer(
+            imageUrl = url,
+            onDismiss = { fullScreenImageUrl = null }
+        )
+    }
+
+    fullScreenVideoUrl?.let { url ->
+        FullScreenVideoViewer(
+            url = url,
+            onClose = { fullScreenVideoUrl = null }
+        )
+    }
+
+    fullScreenLocationUrl?.let { url ->
+        FullScreenLocationViewer(
+            locationUrl = url,
+            onClose = { fullScreenLocationUrl = null }
+        )
+    }
+
+    if (showMediaPreview && pickedUri != null) {
+        MediaPreviewDialog(
+            pickedUri = pickedUri!!,
+            onDismiss = { showMediaPreview = false; pickedUri = null },
+            onUpload = { caption ->
+                val resolver = ctx.contentResolver
+                viewModel.uploadMediaFile(resolver, pickedUri!!, caption)
+                showMediaPreview = false
+                pickedUri = null
+            }
+        )
+    }
+
+    if (showAttachmentSheet) {
+        AttachmentBottomSheet(
+            onDismiss = { showAttachmentSheet = false },
+            onPickImage = { showAttachmentSheet = false; mediaLauncher.launch("image/*") },
+            onPickVideo = { showAttachmentSheet = false; mediaLauncher.launch("video/*") },
+            onPickDocument = { showAttachmentSheet = false; mediaLauncher.launch("*/*") },
+            onPickAudio = { showAttachmentSheet = false; mediaLauncher.launch("audio/*") },
+            onShareLocation = {
+                showAttachmentSheet = false
+                locationPermissionLauncher.launch(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                )
+            }
+        )
+    } // end outer Box
+}
 @Composable
 fun FullScreenImageViewer(
     imageUrl: String,
     onDismiss: () -> Unit
 ) {
+    BackHandler(onBack = onDismiss)
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -511,7 +628,7 @@ fun FullScreenImageViewer(
         IconButton(
             onClick = onDismiss,
             modifier = Modifier
-                .align(Alignment.TopStart)
+                .align(Alignment.TopEnd)
                 .padding(16.dp)
                 .clip(CircleShape)
                 .background(Color.Black.copy(alpha = 0.5f))
@@ -526,7 +643,162 @@ fun FullScreenImageViewer(
     }
 }
 
-// --- MEDIA PREVIEW DIALOG ---
+// --- FULL SCREEN VIDEO VIEWER ---
+@Composable
+fun FullScreenVideoViewer(url: String, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .pointerInput(Unit) { detectTapGestures(onTap = { onClose() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        AndroidView(
+            factory = { context ->
+                android.widget.VideoView(context).apply {
+                    setVideoPath(url)
+                    val mediaController = android.widget.MediaController(context)
+                    mediaController.setAnchorView(this)
+                    setMediaController(mediaController)
+                    setOnPreparedListener { mp -> mp.isLooping = true; start() }
+                }
+            },
+            modifier = Modifier.fillMaxWidth().wrapContentHeight()
+        )
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.5f))
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+        }
+    }
+}
+
+// --- FULL SCREEN LOCATION VIEWER ---
+@Composable
+fun FullScreenLocationViewer(locationUrl: String, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val ctx = LocalContext.current
+    val coords = locationUrl.split(",")
+    if (coords.size != 2) return
+
+    val lat = coords[0].trim().toDoubleOrNull() ?: return
+    val lng = coords[1].trim().toDoubleOrNull() ?: return
+    val latF = String.format("%.5f", lat)
+    val lngF = String.format("%.5f", lng)
+
+    // Geoapify offers a highly detailed, fast Static Map API. 
+    // It's 100% FREE up to 3000 requests/day and requires NO CREDIT CARD to sign up.
+    val geoapifyApiKey = "ce791313d2284ceead3238062a65dff9"
+    
+    val mapUrl = "https://maps.geoapify.com/v1/staticmap?style=osm-bright-smooth&width=800&height=800&center=lonlat:$lng,$lat&zoom=15&marker=lonlat:$lng,$lat;type:material;color:%23ea4335;size:x-large&apiKey=$geoapifyApiKey"
+
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1A1A2E)).statusBarsPadding()) {
+        
+        // Map Image (Direct API call when expanded)
+        AsyncImage(
+            model = mapUrl,
+            contentDescription = "Map",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Top gradient
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(90.dp)
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        colors = listOf(Color.Black.copy(alpha = 0.65f), Color.Transparent)
+                    )
+                )
+        )
+
+        // Close button
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(8.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.5f))
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
+        }
+
+        // Bottom info card
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .navigationBarsPadding(),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp).height(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                )
+                Spacer(Modifier.height(16.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE53935).copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.LocationOn, contentDescription = null,
+                            tint = Color(0xFFE53935), modifier = Modifier.size(26.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("Shared Location",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Text("$latF, $lngF",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Button(
+                    onClick = {
+                        val gmmUri = Uri.parse("geo:$lat,$lng?q=$lat,$lng(Shared+Location)")
+                        try {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW, gmmUri))
+                        } catch (e: Exception) {
+                            ctx.startActivity(Intent(Intent.ACTION_VIEW,
+                                Uri.parse("https://www.google.com/maps?q=$lat,$lng")))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Open in Maps", style = MaterialTheme.typography.labelLarge)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaPreviewDialog(
@@ -620,16 +892,20 @@ fun MessageRow(
     val textColor = if (isMediaMessage) MaterialTheme.colorScheme.onSurface else if (isMine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onPrimary
 
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp, horizontal = 4.dp),
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start
     ) {
         Surface(
             color = bubbleColor,
-            shape = if (isMediaMessage) RoundedCornerShape(8.dp) else MaterialTheme.shapes.medium,
+            shape = if (isMediaMessage) RoundedCornerShape(12.dp) else
+                if (isMine) RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
+                else RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp),
             tonalElevation = if (isMediaMessage) 0.dp else 3.dp,
             shadowElevation = if (isMediaMessage) 0.dp else 2.dp,
             modifier = Modifier
-                .padding(vertical = 4.dp, horizontal = 6.dp)
+                .wrapContentWidth()   // ← KEY FIX: don't stretch to fill row
                 .widthIn(min = 80.dp, max = 280.dp)
                 .combinedClickable(
                     onClick = {
@@ -681,23 +957,11 @@ fun MessageRow(
                     } else if (message.mediaType == "location") {
                         val coords = message.mediaUrl.split(",")
                         if (coords.size == 2) {
-                            val lat = coords[0]
-                            val lng = coords[1]
+                            val lat = coords[0].trim()
+                            val lng = coords[1].trim()
                             
-                            // Calculate OSM Tile X and Y
-                            val zoom = 15
-                            val n = Math.pow(2.0, zoom.toDouble())
-                            val x = ((lng.toDouble() + 180.0) / 360.0 * n).toInt()
-                            val latRad = lat.toDouble() * Math.PI / 180.0
-                            val y = ((1.0 - Math.log(Math.tan(latRad) + 1.0 / Math.cos(latRad)) / Math.PI) / 2.0 * n).toInt()
-                            
-                            // Using CartoDB Voyager tiles which are more permissive and look very clean
-                            val tileUrl = "https://a.basemaps.cartocdn.com/rastertiles/voyager/$zoom/$x/$y.png"
-                            
-                            val imageRequest = coil.request.ImageRequest.Builder(ctx)
-                                .data(tileUrl)
-                                .addHeader("User-Agent", "RippleChatApp/1.0")
-                                .build()
+                            val geoapifyApiKey = "ce791313d2284ceead3238062a65dff9"
+                            val mapUrl = "https://maps.geoapify.com/v1/staticmap?style=osm-bright-smooth&width=400&height=300&center=lonlat:$lng,$lat&zoom=15&marker=lonlat:$lng,$lat;type:material;color:%23ea4335;size:large&apiKey=$geoapifyApiKey"
                             
                             Box(
                                 modifier = Modifier
@@ -708,19 +972,11 @@ fun MessageRow(
                                     },
                                 contentAlignment = Alignment.Center
                             ) {
-                                // 1. Map Image
                                 AsyncImage(
-                                    model = imageRequest,
+                                    model = mapUrl,
                                     contentDescription = "Map Snippet",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
-                                )
-                                // 2. Red Pin in the center
-                                Icon(
-                                    Icons.Default.LocationOn,
-                                    contentDescription = "Pin",
-                                    modifier = Modifier.size(36.dp).padding(bottom = 18.dp),
-                                    tint = Color.Red
                                 )
                             }
                         }
@@ -771,91 +1027,6 @@ fun MessageRow(
     }
 }
 
-@Composable
-fun FullScreenVideoViewer(url: String, onClose: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onClose() }) // Tap outside video to close
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        AndroidView(
-            factory = { context ->
-                android.widget.VideoView(context).apply {
-                    setVideoPath(url)
-                    val mediaController = android.widget.MediaController(context)
-                    mediaController.setAnchorView(this)
-                    setMediaController(mediaController)
-                    setOnPreparedListener { mp ->
-                        mp.isLooping = true
-                        start()
-                    }
-                }
-            },
-            modifier = Modifier.fillMaxWidth().wrapContentHeight()
-        )
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-        }
-    }
-}
-
-@Composable
-fun FullScreenLocationViewer(locationUrl: String, onClose: () -> Unit) {
-    val ctx = LocalContext.current
-    val coords = locationUrl.split(",")
-    if (coords.size != 2) return
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onClose() })
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(16.dp)
-        ) {
-            Icon(Icons.Default.LocationOn, contentDescription = "Location", modifier = Modifier.size(80.dp), tint = Color.Red)
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Shared Location", color = Color.White, style = MaterialTheme.typography.titleLarge)
-            Spacer(modifier = Modifier.height(32.dp))
-            Button(onClick = {
-                val lat = coords[0]
-                val lng = coords[1]
-                val gmmIntentUri = Uri.parse("geo:${lat},${lng}?q=${lat},${lng}(Shared+Location)")
-                val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
-                try {
-                    ctx.startActivity(mapIntent)
-                } catch(e: Exception) {
-                    Toast.makeText(ctx, "Google Maps is not installed", Toast.LENGTH_SHORT).show()
-                }
-            }) {
-                Text("Show on Maps")
-            }
-        }
-        
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-        }
-    }
-}
 
 @Composable
 fun AudioPlayerBubble(message: ChatMessage) {
@@ -928,7 +1099,113 @@ fun AudioPlayerBubble(message: ChatMessage) {
             color = MaterialTheme.colorScheme.primary,
             trackColor = Color.Gray.copy(alpha = 0.5f)
         )
-        Spacer(Modifier.width(8.dp))
-        Icon(Icons.Default.Mic, contentDescription = "Mic", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+    }
+}
+
+// --- WHATSAPP-STYLE ATTACHMENT BOTTOM SHEET ---
+@Composable
+fun AttachmentBottomSheet(
+    onDismiss: () -> Unit,
+    onPickImage: () -> Unit,
+    onPickVideo: () -> Unit,
+    onPickDocument: () -> Unit,
+    onPickAudio: () -> Unit,
+    onShareLocation: () -> Unit
+) {
+    BackHandler(onBack = onDismiss)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .clickable(onClick = onDismiss), // Tap outside to dismiss
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = false) {}, // Prevent clicks passing through sheet
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .navigationBarsPadding() // ← Clears Android nav buttons
+            ) {
+                // Handle bar
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                        .align(Alignment.CenterHorizontally)
+                )
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    AttachmentOption(
+                        icon = Icons.Default.Image,
+                        label = "Photo",
+                        color = Color(0xFF4CAF50),
+                        onClick = onPickImage
+                    )
+                    AttachmentOption(
+                        icon = Icons.Default.PlayCircleOutline,
+                        label = "Video",
+                        color = Color(0xFFE91E63),
+                        onClick = onPickVideo
+                    )
+                    AttachmentOption(
+                        icon = Icons.Default.InsertDriveFile,
+                        label = "Document",
+                        color = Color(0xFF2196F3),
+                        onClick = onPickDocument
+                    )
+                    AttachmentOption(
+                        icon = Icons.Default.MusicNote,
+                        label = "Audio",
+                        color = Color(0xFFFF9800),
+                        onClick = onPickAudio
+                    )
+                    AttachmentOption(
+                        icon = Icons.Default.LocationOn,
+                        label = "Location",
+                        color = Color(0xFF009688),
+                        onClick = onShareLocation
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun AttachmentOption(
+    icon: ImageVector,
+    label: String,
+    color: Color,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(28.dp))
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Medium)
     }
 }

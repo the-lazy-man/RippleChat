@@ -43,6 +43,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import android.graphics.Bitmap
+import android.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+
 import com.example.ripplechat.profile.ProfileState
 import com.example.ripplechat.profile.ProfileViewModel
 
@@ -55,8 +62,10 @@ fun ProfileScreen(
     val ctx = LocalContext.current
     val userState by viewModel.user.collectAsState()
     var name by remember(userState.uid, userState.name) { mutableStateOf(userState.name) }
+    var upiId by remember(userState.uid, userState.upiId) { mutableStateOf(userState.upiId ?: "") }
 
     var showPreview by remember { mutableStateOf(false) }
+    var showQrDialog by remember { mutableStateOf(false) }
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var brightness by remember { mutableFloatStateOf(0f) } // -1..+1
     val brightnessMatrix = remember(brightness) {
@@ -126,17 +135,53 @@ fun ProfileScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            OutlinedTextField(
+                value = upiId,
+                onValueChange = { upiId = it },
+                label = { Text("UPI ID (VPA) for receiving payments") },
+                modifier = Modifier.fillMaxWidth()
+            )
+
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                 Button(
-                    onClick = { viewModel.updateName(name) },
+                    onClick = { 
+                        viewModel.updateName(name) 
+                        viewModel.updateUpiId(upiId)
+                    },
                     modifier = Modifier.weight(1f)
-                ) { Text("Save") }
+                ) { Text("Save Profile") }
 
                 OutlinedButton(
                     onClick = { launcher.launch("image/*") },
                     modifier = Modifier.weight(1f)
                 ) { Text("Change Photo") }
             }
+
+            // QR Code Generator Button
+            OutlinedButton(
+                onClick = { 
+                    if (upiId.isBlank()) {
+                        Toast.makeText(ctx, "Please save your UPI ID first to generate a QR Code.", Toast.LENGTH_SHORT).show()
+                    } else {
+                        showQrDialog = true 
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("My QR Code") }
+
+            OutlinedButton(
+                onClick = {
+                    val shareLink = "ripplechat://chat/${userState.uid}/${userState.name}"
+                    val sendIntent = android.content.Intent().apply {
+                        action = android.content.Intent.ACTION_SEND
+                        putExtra(android.content.Intent.EXTRA_TEXT, "Chat with me on RippleChat! Click here: $shareLink")
+                        type = "text/plain"
+                    }
+                    val shareIntent = android.content.Intent.createChooser(sendIntent, "Share your profile link")
+                    ctx.startActivity(shareIntent)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Share Profile Link") }
 
             OutlinedButton(
                 onClick = {
@@ -188,5 +233,55 @@ fun ProfileScreen(
                 }
             )
         }
+
+        if (showQrDialog) {
+            val qrContent = """{"uid":"${userState.uid}","name":"${userState.name}","vpa":"${userState.upiId}"}"""
+            val qrBitmap = generateQrCode(qrContent)
+            
+            AlertDialog(
+                onDismissRequest = { showQrDialog = false },
+                confirmButton = {
+                    TextButton(onClick = { showQrDialog = false }) { Text("Close") }
+                },
+                title = { Text("My QR Code") },
+                text = {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Scan to add as friend or pay via UPI", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "QR Code",
+                                modifier = Modifier.size(200.dp)
+                            )
+                        } else {
+                            Text("Failed to generate QR Code")
+                        }
+                    }
+                }
+            )
+        }
+    }
+}
+
+fun generateQrCode(content: String): Bitmap? {
+    return try {
+        val writer = QRCodeWriter()
+        val bitMatrix = writer.encode(content, BarcodeFormat.QR_CODE, 512, 512)
+        val width = bitMatrix.width
+        val height = bitMatrix.height
+        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+        for (x in 0 until width) {
+            for (y in 0 until height) {
+                bitmap.setPixel(x, y, if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE)
+            }
+        }
+        bitmap
+    } catch (e: Exception) {
+        e.printStackTrace()
+        null
     }
 }

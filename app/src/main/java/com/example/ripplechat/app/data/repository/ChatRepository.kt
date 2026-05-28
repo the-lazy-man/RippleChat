@@ -146,11 +146,23 @@ class ChatRepository @Inject constructor(
         firebase.deleteMessage(chatId, messageId)
     }
 
-    // Unnecessary `deleteChatForUser` kept minimal as per request
-    suspend fun deleteChatForUser(chatId: String) {
+    /**
+     * Full chat wipe (called from Dashboard delete action):
+     *  - Deletes all Cloudinary media assets
+     *  - Deletes all Firestore messages
+     *  - Resets dashboard entry (chat stays visible but shows empty)
+     *  - Wipes Room (local) cache
+     */
+    suspend fun clearChat(myUid: String, peerUid: String) {
+        firebase.clearChatOnly(myUid, peerUid) // Cloudinary + Firestore wipe
+        val chatId = if (myUid < peerUid) "$myUid-$peerUid" else "$peerUid-$myUid"
+        dao.clearChat(chatId)                   // Room local cache wipe
+    }
+
+    /** Called by DeleteChatMessagesWorker — wipes Firestore messages by chatId only. */
+    suspend fun deleteChatMessages(chatId: String) {
+        firebase.deleteChatMessages(chatId)
         dao.clearChat(chatId)
-        // Optionally delete remote messages if desired, but typically only deletes for the viewing user.
-        // firebase.deleteChatMessages(chatId)
     }
 
     fun listenMessagesRealtime(

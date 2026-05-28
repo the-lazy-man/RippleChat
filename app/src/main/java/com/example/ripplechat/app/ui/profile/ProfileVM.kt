@@ -36,7 +36,8 @@ data class ProfileUser(
     val uid: String = "",
     val name: String = "",
     val email: String = "",
-    val profileImageUrl: String? = null
+    val profileImageUrl: String? = null,
+    val upiId: String? = null
 )
 
 sealed class ProfileState {
@@ -68,7 +69,8 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
                     uid = uid,
                     name = it.getString("name") ?: "",
                     email = it.getString("email") ?: "",
-                    profileImageUrl = it.getString("profileImageUrl")
+                    profileImageUrl = it.getString("profileImageUrl"),
+                    upiId = it.getString("upiId")
                 )
             }
         }
@@ -79,6 +81,15 @@ class ProfileViewModel @Inject constructor() : ViewModel() {
         updateState = ProfileState.Loading
         db.collection("users").document(uid)
             .update(mapOf("name" to newName, "nameIndex" to newName.lowercase()))
+            .addOnSuccessListener { updateState = ProfileState.Success }
+            .addOnFailureListener { updateState = ProfileState.Error(it.localizedMessage ?: "Failed") }
+    }
+
+    fun updateUpiId(newUpiId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        updateState = ProfileState.Loading
+        db.collection("users").document(uid)
+            .update("upiId", newUpiId)
             .addOnSuccessListener { updateState = ProfileState.Success }
             .addOnFailureListener { updateState = ProfileState.Error(it.localizedMessage ?: "Failed") }
     }

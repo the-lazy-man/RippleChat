@@ -24,11 +24,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -48,6 +50,15 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.activity.compose.rememberLauncherForActivityResult
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import org.json.JSONObject
+import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -56,6 +67,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -109,10 +122,33 @@ fun DashboardScreen(
     
     // Status upload state
     var showStatusUpload by remember { mutableStateOf(false) }
+    
+    // QR Scanner State
+    val ctx = LocalContext.current
+    var scannedUserJson by remember { mutableStateOf<JSONObject?>(null) }
+    var showScannedUserDialog by remember { mutableStateOf(false) }
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        if (result.contents != null) {
+            try {
+                val json = JSONObject(result.contents)
+                if (json.has("uid") && json.has("name") && json.has("vpa")) {
+                    scannedUserJson = json
+                    showScannedUserDialog = true
+                } else {
+                    Toast.makeText(ctx, "Invalid QR Code", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(ctx, "Invalid QR Code format", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val chatList by dashboardViewModel.chatList.collectAsState()
     val userNames by statusViewModel.userNames.collectAsState()
     val contactStatuses by statusViewModel.contactStatuses.collectAsState()
+
+    val selectedChats = remember { mutableStateListOf<String>() }
 
     // Sync contact UIDs with StatusVM for status updates
     LaunchedEffect(chatList) {
@@ -122,9 +158,62 @@ fun DashboardScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Ripple Chat") } // Title can be generic or based on selected tab
-            )
+            if (selectedChats.isNotEmpty()) {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { selectedChats.clear() }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Clear Selection")
+                        }
+                    },
+                    title = { Text(selectedChats.size.toString()) },
+                    actions = {
+                        IconButton(onClick = {
+                            selectedChats.clear()
+                        }) {
+                            Icon(Icons.Default.PushPin, contentDescription = "Pin Chat")
+                        }
+                        IconButton(onClick = {
+                            selectedChats.forEach { uid ->
+                                val isMuted = dashboardViewModel.mutedUsers.value.contains(uid)
+                                if (isMuted) dashboardViewModel.unmuteUser(uid)
+                                else dashboardViewModel.muteUser(uid)
+                            }
+                            selectedChats.clear()
+                        }) {
+                            Icon(Icons.Default.NotificationsOff, contentDescription = "Mute Chat")
+                        }
+                        IconButton(onClick = {
+                            selectedChats.forEach { uid ->
+                                dashboardViewModel.removeContact(uid)
+                            }
+                            selectedChats.clear()
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete Chat")
+                        }
+                    },
+                    colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
+            } else {
+                TopAppBar(
+                    title = { Text("Ripple Chat") },
+                    actions = {
+                        IconButton(onClick = {
+                            val options = ScanOptions()
+                            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            options.setPrompt("Scan RippleChat QR Code")
+                            options.setCameraId(0)
+                            options.setBeepEnabled(false)
+                            options.setBarcodeImageEnabled(false)
+                            options.setOrientationLocked(false)
+                            scanLauncher.launch(options)
+                        }) {
+                            Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan QR")
+                        }
+                    }
+                )
+            }
         },
         floatingActionButton = {
             when (pagerState.currentPage) {
@@ -160,7 +249,8 @@ fun DashboardScreen(
                     // FIX: Renamed the complicated logic into a dedicated composable
                     0 -> ChatListAndSearchTab(
                         navController = navController,
-                        dashboardViewModel = dashboardViewModel
+                        dashboardViewModel = dashboardViewModel,
+                        selectedChats = selectedChats
                     )
                     1 -> StatusScreen(
                         navController = navController,
@@ -215,6 +305,60 @@ fun DashboardScreen(
                     }
                 )
             }
+            // Scanned User Dialog
+            if (showScannedUserDialog && scannedUserJson != null) {
+                val json = scannedUserJson!!
+                val scannedUid = json.getString("uid")
+                val scannedName = json.getString("name")
+                val scannedVpa = json.getString("vpa")
+                
+                AlertDialog(
+                    onDismissRequest = { showScannedUserDialog = false },
+                    title = { Text("User Scanned") },
+                    text = {
+                        Column {
+                            Text("Name: $scannedName", style = MaterialTheme.typography.bodyLarge)
+                            if (scannedVpa.isNotBlank() && scannedVpa != "null") {
+                                Spacer(modifier = Modifier.     height(4.dp))
+                                Text("UPI ID: $scannedVpa", style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            scope.launch {
+                                dashboardViewModel.addContact(scannedUid)
+                                showScannedUserDialog = false
+                                val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+                                if (currentUid != null) {
+                                    val chatId = if (currentUid < scannedUid) "$currentUid-$scannedUid" else "$scannedUid-$currentUid"
+                                    navController.navigate("chat/$chatId/$scannedUid/$scannedName")
+                                }
+                            }
+                        }) {
+                            Text("Chat / Add")
+                        }
+                    },
+                    dismissButton = {
+                        if (scannedVpa.isNotBlank() && scannedVpa != "null") {
+                            androidx.compose.material3.OutlinedButton(onClick = {
+                                showScannedUserDialog = false
+                                val upiUri = Uri.parse("upi://pay?pa=$scannedVpa&pn=$scannedName&cu=INR")
+                                val intent = Intent(Intent.ACTION_VIEW, upiUri)
+                                try {
+                                    ctx.startActivity(Intent.createChooser(intent, "Pay via UPI"))
+                                } catch(e: Exception) {
+                                    Toast.makeText(ctx, "No UPI app found", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Text("Pay")
+                            }
+                        } else {
+                            androidx.compose.material3.TextButton(onClick = { showScannedUserDialog = false }) { Text("Cancel") }
+                        }
+                    }
+                )
+            }
         }
     }
 }
@@ -224,7 +368,8 @@ fun DashboardScreen(
 @Composable
 fun ChatListAndSearchTab(
     navController: NavController,
-    dashboardViewModel: DashBoardVM
+    dashboardViewModel: DashBoardVM,
+    selectedChats: androidx.compose.runtime.snapshots.SnapshotStateList<String>
 ) {
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -320,32 +465,25 @@ fun ChatListAndSearchTab(
             // Show existing chats when not searching
             if (showingChats) {
                 items(chatList, key = { it.chatId }) { chatItem ->
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.EndToStart) {
-                                chatToDelete = chatItem
-                                showDeleteDialog = true
-                                false
-                            } else false
-                        }
-                    )
-
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        modifier = Modifier.animateItem(),
-                        backgroundContent = { SwipeToDismissBackground(dismissState) },
-                        content = {
-                            ChatCard(
-                                chatItem = chatItem,
-                                onChatClick = {
-                                    dashboardViewModel.markChatAsRead(chatItem.chatId)
-                                    navController.navigate("chat/${chatItem.chatId}/${chatItem.peerUid}/${chatItem.peerName}")
-                                },
-                                dashboardViewModel = dashboardViewModel
-                            )
+                    val isSelected = selectedChats.contains(chatItem.peerUid)
+                    
+                    ChatCard(
+                        chatItem = chatItem,
+                        onChatClick = {
+                            if (selectedChats.isNotEmpty()) {
+                                if (isSelected) selectedChats.remove(chatItem.peerUid)
+                                else selectedChats.add(chatItem.peerUid)
+                            } else {
+                                dashboardViewModel.markChatAsRead(chatItem.chatId)
+                                navController.navigate("chat/${chatItem.chatId}/${chatItem.peerUid}/${chatItem.peerName}")
+                            }
                         },
-                        enableDismissFromEndToStart = true,
-                        enableDismissFromStartToEnd = false
+                        onChatLongClick = {
+                            if (isSelected) selectedChats.remove(chatItem.peerUid)
+                            else selectedChats.add(chatItem.peerUid)
+                        },
+                        isSelected = isSelected,
+                        dashboardViewModel = dashboardViewModel
                     )
                 }
             } else {
@@ -421,20 +559,29 @@ private fun ProfileTab(navController: NavController, profileVM: ProfileViewModel
 
 // --- Shared Components ---
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChatCard(
     chatItem: ChatListItem,
     onChatClick: () -> Unit,
+    onChatLongClick: () -> Unit,
+    isSelected: Boolean,
     dashboardViewModel: DashBoardVM
 ) {
     val mutedUsers by dashboardViewModel.mutedUsers.collectAsState(initial = emptySet())
     val isMuted = mutedUsers.contains(chatItem.peerUid)
     
     Card(
-        onClick = onChatClick,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp, horizontal = 8.dp)
+            .combinedClickable(
+                onClick = onChatClick,
+                onLongClick = onChatLongClick
+            ),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+        )
     ) {
         Row(
             Modifier.padding(16.dp),
@@ -507,23 +654,13 @@ private fun ChatCard(
             
             Spacer(Modifier.width(8.dp))
             
-            // Mute/Unmute button
-            IconButton(
-                onClick = {
-                    if (isMuted) {
-                        dashboardViewModel.unmuteUser(chatItem.peerUid)
-                    } else {
-                        dashboardViewModel.muteUser(chatItem.peerUid)
-                    }
-                }
-            ) {
+            // Status Icons (Muted)
+            if (isMuted) {
                 Icon(
-                    imageVector = if (isMuted) {
-                        Icons.Default.NotificationsOff
-                    } else {
-                        Icons.Default.Notifications
-                    },
-                    contentDescription = if (isMuted) "Unmute Notifications" else "Mute Notifications"
+                    imageVector = Icons.Default.NotificationsOff,
+                    contentDescription = "Muted",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

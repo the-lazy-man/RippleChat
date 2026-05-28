@@ -42,13 +42,11 @@ class DeleteChatMessagesWorker(
         }
 
         return try {
-            // Delete all messages in the chat (simple deletion without Cloudinary cleanup)
-            // Note: If you need Cloudinary cleanup, you'll need to restore deleteChatMessagesWithMedia
-            chatRepository.deleteChatForUser(chatId)
+            // Delete all Firestore messages + Cloudinary media for this chat
+            chatRepository.deleteChatMessages(chatId)
             Log.d(TAG, "All messages deleted successfully in chat: $chatId")
             Result.success()
         } catch (e: Exception) {
-            // If the operation fails (e.g., network error), retry later
             Log.e(TAG, "Failed to delete chat messages. Retrying.", e)
             Result.retry()
         }
