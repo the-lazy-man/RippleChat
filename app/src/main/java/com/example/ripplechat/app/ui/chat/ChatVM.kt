@@ -21,7 +21,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import android.content.Context
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -65,6 +67,13 @@ class ChatViewModel @Inject constructor(
 
     private val _uploadError = MutableStateFlow<String?>(null)
     val uploadError = _uploadError.asStateFlow()
+    
+    // Group / Chat Metadata
+    private val _chatMetadata = MutableStateFlow<Map<String, Any>?>(null)
+    val chatMetadata = _chatMetadata.asStateFlow()
+    
+    private val _participantNames = MutableStateFlow<Map<String, String>>(emptyMap())
+    val participantNames = _participantNames.asStateFlow()
 
     // 💡 NEW: Variable to hold the current user's name fetched from the database
     private var currentUserName: String = "RippleChat User"
@@ -106,7 +115,32 @@ class ChatViewModel @Inject constructor(
                 currentUserName = repo.getSenderName(uid)
             }
         }
-        // Realtime Firestore Listener
+        // Listen for chat metadata (useful for groups to get participants/name)
+        val uid = currentUserId ?: ""
+        if (uid.isNotBlank()) {
+            chatDocListener = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("users").document(uid)
+                .collection("chats").document(chatId)
+                .addSnapshotListener { snapshot, e ->
+                    if (e != null || snapshot == null) return@addSnapshotListener
+                    val data = snapshot.data
+                    _chatMetadata.value = data
+                    
+                    val participants = data?.get("participants") as? List<String>
+                    if (participants != null && participants.isNotEmpty()) {
+                        viewModelScope.launch {
+                            val namesMap = mutableMapOf<String, String>()
+                            participants.forEach { pUid ->
+                                val name = if (pUid == currentUserId) "You" else repo.getSenderName(pUid)
+                                namesMap[pUid] = name
+                            }
+                            _participantNames.value = namesMap
+                        }
+                    }
+                }
+        }
+        
+        // Listen to remote changes
         messagesListener = repo.listenMessagesRealtime(
             chatId,
             onAdded = { msg -> viewModelScope.launch { repo.insertOrUpdate(msg) } },
@@ -128,6 +162,32 @@ class ChatViewModel @Inject constructor(
 
     fun closeChat() {
         removeListeners()
+    }
+
+    // --- Update Group Icon ---
+    fun updateGroupIcon(context: Context, uri: Uri, chatId: String, participants: List<String>) {
+        viewModelScope.launch {
+            _isUploadingMedia.value = true
+            try {
+                val bytes = com.example.ripplechat.app.util.CloudinaryUploadHelper.uriToImageBytes(uri = uri, contentResolver = context.contentResolver)
+                if (bytes != null) {
+                    val url = com.example.ripplechat.app.util.CloudinaryUploadHelper.uploadImage(bytes, "group_icons/${chatId}_${System.currentTimeMillis()}")
+                    if (url != null) {
+                        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        participants.forEach { pUid ->
+                            db.collection("users").document(pUid)
+                                .collection("chats").document(chatId)
+                                .update("groupIcon", url).await()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uploadError.value = "Failed to update group icon"
+            } finally {
+                _isUploadingMedia.value = false
+            }
+        }
     }
 
     // Media upload functionality - Cloudinary integration

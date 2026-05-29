@@ -59,6 +59,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -152,7 +153,7 @@ fun DashboardScreen(
 
     // Sync contact UIDs with StatusVM for status updates
     LaunchedEffect(chatList) {
-        val contactIds = chatList.map { it.peerUid }
+        val contactIds = chatList.filter { !it.isGroup && it.peerUid.isNotBlank() }.map { it.peerUid }
         statusViewModel.startListeningContactStatuses(contactIds)
     }
 
@@ -199,6 +200,9 @@ fun DashboardScreen(
                 TopAppBar(
                     title = { Text("Ripple Chat") },
                     actions = {
+                        IconButton(onClick = { navController.navigate("create_group") }) {
+                            Icon(Icons.Default.GroupAdd, contentDescription = "Create Group")
+                        }
                         IconButton(onClick = {
                             val options = ScanOptions()
                             options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
@@ -475,7 +479,13 @@ fun ChatListAndSearchTab(
                                 else selectedChats.add(chatItem.peerUid)
                             } else {
                                 dashboardViewModel.markChatAsRead(chatItem.chatId)
-                                navController.navigate("chat/${chatItem.chatId}/${chatItem.peerUid}/${chatItem.peerName}")
+                                val safeUid = chatItem.peerUid.takeIf { it.isNotBlank() } ?: "group"
+                                val safeName = if (chatItem.isGroup) {
+                                    chatItem.groupName?.takeIf { it.isNotBlank() } ?: "Group"
+                                } else {
+                                    chatItem.peerName.takeIf { it.isNotBlank() } ?: "Unknown"
+                                }
+                                navController.navigate("chat/${chatItem.chatId}/$safeUid/$safeName")
                             }
                         },
                         onChatLongClick = {
@@ -588,10 +598,16 @@ private fun ChatCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Profile Picture
+            val displayName = if (chatItem.isGroup) (chatItem.groupName ?: "Group") else chatItem.peerName
+            val displayPic = if (chatItem.isGroup) {
+                chatItem.groupIcon ?: "https://ui-avatars.com/api/?name=${displayName}&background=random"
+            } else {
+                chatItem.peerProfilePic ?: "https://ui-avatars.com/api/?name=${displayName}"
+            }
+            
             Box {
                 AsyncImage(
-                    model = chatItem.peerProfilePic
-                        ?: "https://ui-avatars.com/api/?name=${chatItem.peerName}",
+                    model = displayPic,
                     contentDescription = null,
                     modifier = Modifier
                         .size(48.dp)
@@ -625,7 +641,7 @@ private fun ChatCard(
                     verticalAlignment = Alignment.Top
                 ) {
                     Text(
-                        text = chatItem.peerName,
+                        text = displayName,
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
                     )

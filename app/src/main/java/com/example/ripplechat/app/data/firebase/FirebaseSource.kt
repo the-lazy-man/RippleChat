@@ -413,29 +413,52 @@ class FirebaseSource(
         myProfilePic: String? = null,
         peerProfilePic: String? = null
     ) {
-        // Update sender's chat list (me)
-        firestore.collection("users").document(myUid)
-            .collection("chats").document(chatId)
-            .set(mapOf(
-                "peerUid" to peerUid,
-                "peerName" to peerName,
-                "peerProfilePic" to peerProfilePic,
-                "lastMessage" to lastMessage,
-                "lastTimestamp" to timestamp
-                // Don't increment unreadCount for sender
-            ), SetOptions.merge()).await()
-
-        // Update receiver's chat list (peer)
-        firestore.collection("users").document(peerUid)
-            .collection("chats").document(chatId)
-            .set(mapOf(
-                "peerUid" to myUid,
-                "peerName" to myName,
-                "peerProfilePic" to myProfilePic,
-                "lastMessage" to lastMessage,
-                "lastTimestamp" to timestamp,
-                "unreadCount" to FieldValue.increment(1) // Increment for receiver
-            ), SetOptions.merge()).await()
+        // Fetch existing metadata to check if it's a group
+        val myChatDoc = firestore.collection("users").document(myUid)
+            .collection("chats").document(chatId).get().await()
+        
+        val isGroup = myChatDoc.getBoolean("isGroup") ?: false
+        
+        if (isGroup) {
+            val participants = myChatDoc.get("participants") as? List<String> ?: emptyList()
+            // Send update to all participants
+            for (uid in participants) {
+                val data = mutableMapOf<String, Any>(
+                    "lastMessage" to lastMessage,
+                    "lastTimestamp" to timestamp
+                )
+                if (uid != myUid) {
+                    data["unreadCount"] = FieldValue.increment(1)
+                }
+                firestore.collection("users").document(uid)
+                    .collection("chats").document(chatId)
+                    .set(data, SetOptions.merge()).await()
+            }
+        } else {
+            // Update sender's chat list (me)
+            firestore.collection("users").document(myUid)
+                .collection("chats").document(chatId)
+                .set(mapOf(
+                    "peerUid" to peerUid,
+                    "peerName" to peerName,
+                    "peerProfilePic" to peerProfilePic,
+                    "lastMessage" to lastMessage,
+                    "lastTimestamp" to timestamp
+                    // Don't increment unreadCount for sender
+                ), SetOptions.merge()).await()
+    
+            // Update receiver's chat list (peer)
+            firestore.collection("users").document(peerUid)
+                .collection("chats").document(chatId)
+                .set(mapOf(
+                    "peerUid" to myUid,
+                    "peerName" to myName,
+                    "peerProfilePic" to myProfilePic,
+                    "lastMessage" to lastMessage,
+                    "lastTimestamp" to timestamp,
+                    "unreadCount" to FieldValue.increment(1) // Increment for receiver
+                ), SetOptions.merge()).await()
+        }
     }
 
     /**

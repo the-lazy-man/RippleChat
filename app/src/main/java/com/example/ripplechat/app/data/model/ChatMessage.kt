@@ -11,5 +11,6 @@ data class ChatMessage(
     val edited: Boolean = false,
     val mediaUrl: String? = null,
     val isMedia: Boolean = false,
-    val mediaType: String? = null
+    val mediaType: String? = null,
+    val senderName: String? = null
 )   

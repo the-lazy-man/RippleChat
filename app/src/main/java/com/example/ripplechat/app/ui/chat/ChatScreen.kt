@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
@@ -90,6 +91,18 @@ fun ChatScreen(
     val isDeleting by viewModel.isDeletingMessage.collectAsState()
     val isUploading by viewModel.isUploadingMedia.collectAsState()
     val uploadError by viewModel.uploadError.collectAsState()
+    val chatMetadata by viewModel.chatMetadata.collectAsState()
+    val participantNames by viewModel.participantNames.collectAsState()
+    
+    var showGroupInfoDialog by remember { mutableStateOf(false) }
+    var showGroupMenu by remember { mutableStateOf(false) }
+    
+    val groupIconLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val participants = chatMetadata?.get("participants") as? List<String> ?: emptyList()
+            viewModel.updateGroupIcon(ctx, uri, chatId, participants)
+        }
+    }
 
     val myUid = viewModel.currentUserId
 
@@ -196,14 +209,31 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
+                    val isGroup = peerUid == "group"
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = isGroup) { showGroupInfoDialog = true },
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (isGroup) {
+                            val groupIconUrl = chatMetadata?.get("groupIcon") as? String
+                            coil.compose.AsyncImage(
+                                model = groupIconUrl ?: "https://ui-avatars.com/api/?name=${Uri.encode(peerName)}",
+                                contentDescription = "Group Icon",
+                                modifier = Modifier
+                                    .padding(end = 12.dp)
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                            )
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(peerName, style = MaterialTheme.typography.titleMedium)
-                            if (typing) {
+                            if (isGroup) {
+                                Text("Group Chat", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)))
+                            } else if (typing) {
                                 Text("$peerName is typing...", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.primary))
                             } else if (!peerOnline) {
                                 Text(
@@ -215,19 +245,70 @@ fun ChatScreen(
                             }
                         }
                         // Status Indicator (Simplified)
-                        Box(modifier = Modifier.padding(horizontal = 8.dp).size(10.dp).clip(CircleShape).background(if (peerOnline) Color.Green else MaterialTheme.colorScheme.error))
+                        if (peerUid != "group") {
+                            Box(modifier = Modifier.padding(horizontal = 8.dp).size(10.dp).clip(CircleShape).background(if (peerOnline) Color.Green else MaterialTheme.colorScheme.error))
+                        }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                },
+                actions = {
+                    val isGroup = peerUid == "group"
+                    if (isGroup) {
+                        IconButton(onClick = { showGroupMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Group Settings")
+                        }
+                        DropdownMenu(
+                            expanded = showGroupMenu,
+                            onDismissRequest = { showGroupMenu = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Group Info") },
+                                onClick = {
+                                    showGroupMenu = false
+                                    showGroupInfoDialog = true
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Change Group Icon") },
+                                onClick = {
+                                    showGroupMenu = false
+                                    groupIconLauncher.launch("image/*")
+                                }
+                            )
+                        }
+                    }
                 }
             )
         }
     ) { padding ->
 
-
+        // --- GROUP INFO DIALOG ---
+        if (showGroupInfoDialog && chatMetadata != null) {
+            val participants = chatMetadata!!["participants"] as? List<String> ?: emptyList()
+            AlertDialog(
+                onDismissRequest = { showGroupInfoDialog = false },
+                title = { Text("Group Info") },
+                text = {
+                    Column {
+                        Text("Participants (${participants.size})", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
+                            items(participants) { uid ->
+                                val displayName = participantNames[uid] ?: uid
+                                Text(displayName, modifier = Modifier.padding(vertical = 4.dp))
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { showGroupInfoDialog = false }) { Text("Close") }
+                }
+            )
+        }
 
         // --- EDIT MESSAGE DIALOG --- (Renders on top of content but under loader)
         messageToEdit?.let { msg ->
@@ -366,9 +447,11 @@ fun ChatScreen(
             ) {
                 items(messages, key = { it.messageId }) { msg ->
                     val isMine = msg.senderId == myUid
+                    val isGroup = peerUid == "group"
                     MessageRow(
                         message = msg,
                         isMine = isMine,
+                        isGroup = isGroup,
                         onImageClick = { url, type ->
                             if (type == "image") {
                                 fullScreenImageUrl = url
@@ -876,6 +959,7 @@ fun MediaPreviewDialog(
 fun MessageRow(
     message: ChatMessage,
     isMine: Boolean,
+    isGroup: Boolean = false,
     onImageClick: (String, String) -> Unit,
     onEditClicked: () -> Unit,
     onDeleteClicked: () -> Unit
@@ -917,6 +1001,15 @@ fun MessageRow(
                 )
         ) {
             Column(modifier = Modifier.padding(all = if (isMediaMessage) 4.dp else 10.dp)) {
+                
+                if (isGroup && !isMine && message.senderName != null) {
+                    Text(
+                        text = message.senderName,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
 
                 if (isMediaMessage && message.mediaUrl != null) {
                     val displayUrl = if (message.mediaType == "video" && message.mediaUrl.contains("cloudinary")) {
