@@ -15,6 +15,9 @@ import com.example.ripplechat.app.ui.dashboard.DashboardScreen
 import com.example.ripplechat.app.ui.profile.ProfileScreen
 import com.example.ripplechat.app.ui.status.MyStatusViewerScreen
 import com.example.ripplechat.app.ui.status.OthersStatusViewerScreen
+import com.example.ripplechat.app.ui.chat.NewGroupScreen
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.ripplechat.app.data.model.ui.theme.screens.home.DashBoardVM
 
 @Composable
 fun NavGraph(navController: NavHostController) {
@@ -24,6 +27,11 @@ fun NavGraph(navController: NavHostController) {
         composable("signup") { SignupScreen(navController) }
         composable("dashboard") { DashboardScreen(navController) }
         composable("profile") { ProfileScreen(navController) }
+        
+        composable("create_group") {
+            val dashboardVM: DashBoardVM = hiltViewModel()
+            NewGroupScreen(navController, dashboardVM)
+        }
         
         // Deep Link Route for starting a chat
         composable(

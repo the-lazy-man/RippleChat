@@ -72,15 +72,16 @@ class ChatRepository @Inject constructor(
 
     // FIX: Correctly formats payload for the fixed FirebaseSource.sendMessage
     suspend fun sendMessage(chatId: String, messageId: String, text: String, senderId: String, receiverId: String) {
+        val senderInfo = firebase.getUserInfo(senderId)
         val payload = mapOf(
             "text" to text,
             "senderId" to senderId,
+            "senderName" to (senderInfo?.get("name") as? String ?: "Unknown"),
             "timestamp" to Timestamp.now()
         )
         firebase.sendMessage(chatId, messageId, payload)
         
         // NEW: Update chat metadata for both users
-        val senderInfo = firebase.getUserInfo(senderId)
         val receiverInfo = firebase.getUserInfo(receiverId)
         
         if (senderInfo != null && receiverInfo != null) {
@@ -108,8 +109,10 @@ class ChatRepository @Inject constructor(
         receiverId: String,
         mediaType: String
     ) {
+        val senderInfo = firebase.getUserInfo(senderId)
         val payload = mapOf<String, Any>(
             "senderId" to senderId,
+            "senderName" to (senderInfo?.get("name") as? String ?: "Unknown"),
             "text" to text,
             "mediaUrl" to mediaUrl,
             "isMedia" to true,
@@ -119,7 +122,6 @@ class ChatRepository @Inject constructor(
         firebase.sendMessage(chatId, messageId, payload)
         
         // Update chat metadata
-        val senderInfo = firebase.getUserInfo(senderId)
         val receiverInfo = firebase.getUserInfo(receiverId)
         
         if (senderInfo != null && receiverInfo != null) {

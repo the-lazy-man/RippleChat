@@ -145,7 +145,11 @@ class DashBoardVM @Inject constructor(
                     lastTimestamp = (data["lastTimestamp"] as? com.google.firebase.Timestamp)?.toDate()?.time
                         ?: 0,
                     unreadCount = (data["unreadCount"] as? Long)?.toInt() ?: 0,
-                    isMuted = false // TODO: Add muted tracking later
+                    isMuted = false, // TODO: Add muted tracking later
+                    isGroup = data["isGroup"] as? Boolean ?: false,
+                    groupName = data["groupName"] as? String,
+                    groupIcon = data["groupIcon"] as? String,
+                    participants = (data["participants"] as? List<String>) ?: emptyList()
                 )
             }
         }

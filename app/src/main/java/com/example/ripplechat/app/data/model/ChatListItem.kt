@@ -8,5 +8,10 @@ data class ChatListItem(
     val lastMessage: String = "",
     val lastTimestamp: Long = 0,
     val unreadCount: Int = 0,
-    val isMuted: Boolean = false
+    val isMuted: Boolean = false,
+    // Group fields
+    val isGroup: Boolean = false,
+    val groupName: String? = null,
+    val groupIcon: String? = null,
+    val participants: List<String> = emptyList()
 )

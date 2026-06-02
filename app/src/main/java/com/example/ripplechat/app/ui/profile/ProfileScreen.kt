@@ -147,6 +147,7 @@ fun ProfileScreen(
                     onClick = { 
                         viewModel.updateName(name) 
                         viewModel.updateUpiId(upiId)
+                        Toast.makeText(ctx, "Profile Saved Successfully!", Toast.LENGTH_SHORT).show()
                     },
                     modifier = Modifier.weight(1f)
                 ) { Text("Save Profile") }
