@@ -190,6 +190,30 @@ class ChatViewModel @Inject constructor(
         }
     }
 
+    // --- Remove Participant ---
+    fun removeParticipant(chatId: String, participantUidToRemove: String, currentParticipants: List<String>) {
+        viewModelScope.launch {
+            try {
+                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                val updatedParticipants = currentParticipants.filter { it != participantUidToRemove }
+                
+                // Update for remaining participants
+                updatedParticipants.forEach { pUid ->
+                    db.collection("users").document(pUid)
+                        .collection("chats").document(chatId)
+                        .update("participants", updatedParticipants).await()
+                }
+                
+                // Optionally remove the chat doc for the removed participant
+                db.collection("users").document(participantUidToRemove)
+                    .collection("chats").document(chatId).delete().await()
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
     // Media upload functionality - Cloudinary integration
     fun uploadMediaFile(resolver: ContentResolver, sourceUri: Uri, caption: String = "") {
         val uid = currentUserId ?: return

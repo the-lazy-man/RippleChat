@@ -289,6 +289,9 @@ fun ChatScreen(
         // --- GROUP INFO DIALOG ---
         if (showGroupInfoDialog && chatMetadata != null) {
             val participants = chatMetadata!!["participants"] as? List<String> ?: emptyList()
+            val adminUid = chatMetadata!!["adminUid"] as? String
+            val isAdmin = adminUid == myUid
+            
             AlertDialog(
                 onDismissRequest = { showGroupInfoDialog = false },
                 title = { Text("Group Info") },
@@ -299,7 +302,25 @@ fun ChatScreen(
                         LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp)) {
                             items(participants) { uid ->
                                 val displayName = participantNames[uid] ?: uid
-                                Text(displayName, modifier = Modifier.padding(vertical = 4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = displayName + if (uid == adminUid) " (Admin)" else "", 
+                                        modifier = Modifier.weight(1f),
+                                        fontWeight = if (uid == adminUid) androidx.compose.ui.text.font.FontWeight.Bold else null
+                                    )
+                                    if (isAdmin && uid != myUid) {
+                                        IconButton(
+                                            onClick = { viewModel.removeParticipant(chatId, uid, participants) },
+                                            modifier = Modifier.size(24.dp)
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = "Remove", tint = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -452,6 +473,7 @@ fun ChatScreen(
                         message = msg,
                         isMine = isMine,
                         isGroup = isGroup,
+                        senderNameOverride = participantNames[msg.senderId],
                         onImageClick = { url, type ->
                             if (type == "image") {
                                 fullScreenImageUrl = url
@@ -960,6 +982,7 @@ fun MessageRow(
     message: ChatMessage,
     isMine: Boolean,
     isGroup: Boolean = false,
+    senderNameOverride: String? = null,
     onImageClick: (String, String) -> Unit,
     onEditClicked: () -> Unit,
     onDeleteClicked: () -> Unit
@@ -1002,12 +1025,15 @@ fun MessageRow(
         ) {
             Column(modifier = Modifier.padding(all = if (isMediaMessage) 4.dp else 10.dp)) {
                 
-                if (isGroup && !isMine && message.senderName != null) {
+                val finalSenderName = senderNameOverride ?: message.senderName
+                if (isGroup && !isMine && finalSenderName != null) {
                     Text(
-                        text = message.senderName,
+                        text = finalSenderName,
                         style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(bottom = 2.dp)
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f),
+                        modifier = Modifier
+                            .align(Alignment.End)
+                            .padding(bottom = 2.dp)
                     )
                 }
 

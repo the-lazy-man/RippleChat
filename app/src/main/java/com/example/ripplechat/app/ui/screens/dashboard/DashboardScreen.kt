@@ -479,7 +479,7 @@ fun ChatListAndSearchTab(
                                 else selectedChats.add(chatItem.peerUid)
                             } else {
                                 dashboardViewModel.markChatAsRead(chatItem.chatId)
-                                val safeUid = chatItem.peerUid.takeIf { it.isNotBlank() } ?: "group"
+                                val safeUid = if (chatItem.isGroup) "group" else chatItem.peerUid.takeIf { it.isNotBlank() } ?: "group"
                                 val safeName = if (chatItem.isGroup) {
                                     chatItem.groupName?.takeIf { it.isNotBlank() } ?: "Group"
                                 } else {

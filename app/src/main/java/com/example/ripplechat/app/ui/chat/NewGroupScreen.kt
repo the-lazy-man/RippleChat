@@ -97,6 +97,7 @@ fun NewGroupScreen(
                                     "isGroup" to true,
                                     "groupName" to groupName.trim(),
                                     "groupIcon" to uploadedIconUrl,
+                                    "adminUid" to currentUid,
                                     "participants" to participants,
                                     "lastMessage" to "Group created",
                                     "lastTimestamp" to com.google.firebase.Timestamp.now()
